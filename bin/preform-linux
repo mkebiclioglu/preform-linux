@@ -99,11 +99,13 @@ check_pinned_root() {
 # True when some "Subject:" line carries both CN=Formlabs Inc. and O=Formlabs Inc.
 # (osslsigncode prints "CN=..., O=..." or OpenSSL's legacy "/C=US/.../CN=..." form).
 subjects_name_formlabs() {
-  sed -n 's/^.*Subject: *//p' <<<"$1" | while IFS= read -r subj; do
+  local subj
+  while IFS= read -r subj; do
     if grep -qE '(^|[,/] *)CN=Formlabs Inc\.( *[,/]|$)' <<<"$subj" && grep -qE '(^|[,/] *)O=Formlabs Inc\.( *[,/]|$)' <<<"$subj"; then
-      echo yes
+      return 0
     fi
-  done | grep -q yes
+  done < <(sed -n 's/^.*Subject: *//p' <<<"$1")
+  return 1
 }
 
 verify_authenticode() {
