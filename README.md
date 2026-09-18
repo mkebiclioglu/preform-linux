@@ -24,10 +24,10 @@ mkdir jobs
 docker compose up
 ```
 
-That pulls `ghcr.io/mkebiclioglu/preform-linux:latest` (while this repository
-is private the package is too: `docker login ghcr.io` with a token that has
-`read:packages` first, or build locally with `docker compose up --build`). The
-first start downloads PreFormServer from `downloads.formlabs.com` (about 330 MB),
+That pulls `ghcr.io/mkebiclioglu/preform-linux:latest` (or builds the same
+image locally with `docker compose up --build`, which is also the fallback if
+the pull is refused). The first start downloads PreFormServer from
+`downloads.formlabs.com` (about 330 MB),
 verifies Formlabs' Authenticode signature, and stores it in the `preform-data`
 volume, so later starts are quick. The image itself never contains Formlabs
 software. When the log shows `PreFormServer is ready`:
