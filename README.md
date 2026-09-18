@@ -8,10 +8,11 @@ plain user-level install. The point is automation: a Linux box, VM or CI runner
 that imports models, orients and supports them, estimates print time and writes
 `.form` files over plain HTTP.
 
-**Status: experimental.** Everything the Local API does through PreFormServer's
-own code (import, orient, support, layout, packing, validation, estimates,
-`.form` export) is exercised weekly in CI. mDNS printer discovery does not work
-under Wine (details below). USB printers are out of reach.
+**Status: working, young.** Both paths (the Docker image and a bare Ubuntu
+24.04 install) pass an end-to-end CI check every week: import a model, orient,
+support, lay out, estimate print time, write the `.form` file, render a
+screenshot, all on a GPU-less runner. mDNS printer discovery does not work under
+Wine (details below) and USB printers are out of reach.
 
 ## Quick start (Docker)
 

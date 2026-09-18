@@ -181,7 +181,8 @@ init_prefix() {
   disable_winedbg
   # Wine 11 keeps services.exe & co. alive after wineboot, so waiting for the server to exit
   # would hang; give it a moment and then shut the prefix down explicitly.
-  timeout 20 wineserver -w 2>/dev/null || wineserver -k 2>/dev/null || true
+  # (SIGTERM first so the server writes the registry; SIGKILL if it lingers.)
+  timeout 20 wineserver -w 2>/dev/null || { wineserver -k15 2>/dev/null; sleep 2; wineserver -k 2>/dev/null; } || true
 }
 
 # --- commands ------------------------------------------------------------------------
@@ -333,7 +334,7 @@ cmd_doctor() {
   done
   if [ -f "$WINEPREFIX/system.reg" ]; then
     if grep -A8 'AeDebug\]' "$WINEPREFIX/system.reg" 2>/dev/null | grep -q '"Auto"=dword:00000000'; then echo "winedbg:         auto-attach disabled (crashes exit)"
-    else echo "winedbg:         auto-attach still enabled; run/install will disable it"; fi
+    else echo "winedbg:         auto-attach not persisted yet (run disables it at every start)"; fi
   fi
   if [ -f "$EXE" ]; then
     echo "PreFormServer:   $(installed_version) at $INSTALL_DIR$([ -f "$INSTALL_DIR/dnsapi.dll" ] && echo ' (dnsapi shim installed)')"
