@@ -88,7 +88,7 @@ jobs:
           done
           # SLS identities: firmware version string formats
           i=0
-          for fw in 1.13.5 1.13.5-1234 1.13.5-rc1 2.0.0-0 1.13.5+1234; do
+          for fw in rc-1.13.5-1234 rc-9.9.9-99999 1.9.0-2444 rc-1.9.0-2444 release-1.13.5-1234; do
             i=$((i+1)); tag=$(echo "$fw" | tr -c 'A-Za-z0-9\n' '_')
             sudo ip addr add "$NET.3$i/32" dev lo
             sudo nohup python3 sim/printer-sim.py --bind "$NET.3$i" --machine FS30-1-0 --product "Fuse 1+" --material FLP12B01 --firmware "$fw" --build-num 99999 --layer-compat 6 --compat lists --serial "SimFuse-$tag" >"sim-fuse-$tag.log" 2>&1 &
@@ -151,7 +151,7 @@ jobs:
           f1=$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"machine_type":"FS30-1-0","material_code":"FLP12B01","layer_thickness_mm":0.11}' $B/scene/ | j 'd["id"]')
           op "/scene/$f1/import-model/" "{\"file\":\"Z:$PWD/cube.stl\"}" >/dev/null
           op "/scene/$f1/auto-pack/" '{}' >/dev/null
-          for fw in 1.13.5 1.13.5-1234 1.13.5-rc1 2.0.0-0 1.13.5+1234; do
+          for fw in rc-1.13.5-1234 rc-9.9.9-99999 1.9.0-2444 rc-1.9.0-2444 release-1.13.5-1234; do
             id="SimFuse-$(echo "$fw" | tr -c 'A-Za-z0-9\n' '_')"
             echo "--- $id: $(curl -sS "$B/devices/$id/" | python3 -c 'import json,sys; d=json.load(sys.stdin); print({k: d.get(k) for k in ("firmware_version","status","ready_to_print_now")})')"
             echo "--- print to $id"; op "/scene/$f1/print/" "{\"printer\":\"$id\",\"job_name\":\"sim-fuse\"}"
