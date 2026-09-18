@@ -112,7 +112,7 @@ def information(args):
             "FactoryMACAddress": args.mac,
         },
         "ipAddresses": [args.bind],
-        "capabilities": [],
+        "capabilities": json.loads(args.capabilities),
     }
 
 def is_sls(args):
@@ -226,6 +226,7 @@ def main():
     p.add_argument("--firmware", default="2.5.0", help="firmware version PreFormServer will show for the printer")
     p.add_argument("--layer-compat", type=int, default=6, help="layer (flx) compatibility number")
     p.add_argument("--powder-level", default="FULL")
+    p.add_argument("--capabilities", default="[]", help='JSON array reported as the printer\'s firmware capabilities')
     p.add_argument("--product", default="Form 4")
     p.add_argument("--machine", default="FORM-4-0")
     p.add_argument("--material", default="FLGPBK05")
