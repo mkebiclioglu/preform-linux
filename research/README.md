@@ -52,6 +52,25 @@ Other packets in the binary: `SecureHandshake_v1` (`DataBase64`, `NonceBase64`,
 `AbortIdleRoutine`, `GetScaleCorrection`, `LocalForward`,
 `RegisterUserToDashboard`.
 
+## What still blocks SLS jobs to a simulated printer
+
+With family-specific status packets a simulated Fuse 1, Fuse 1+ or Fuse X1 is
+discovered, shows material, cylinder, powder credit and "Primed", and gets
+`GET_STATUS` polled (v1 for Fuse 1/1+, v3 for Fuse X1). A print request still ends
+in `Cannot print, the printer might have an incompatible firmware version` before
+any upload starts, the same answer PreFormServer gives its own virtual SLS printers.
+Ruled out: the compatibility descriptor (`PF_printing` widened to every version),
+`firmware_version` (2.5.0 and 9.9.9 both show in the device record), the layer and
+formule compatibility numbers, `machine_capabilities` on scene creation (the API
+rejects the field), and capability strings or category/revision objects in the
+information reply. The check lives next to `Incorrect MachineCapabilities for: %1`
+and `Machine firmware doesn't support the following capabilities: %1`
+(`Form4PrinterCapabilities.cpp`, "Invalid category revisions for machine type"):
+PreForm matches the printer's reported capability categories and revisions against
+the job's, and the category names are not string literals in the binary. A capture
+from a real Fuse (`tcpdump port 35` while PreForm probes it) would give them in one
+shot.
+
 ## How the schemas were read
 
 `strings` gives the vocabulary but MSVC pools string literals by suffix, so
