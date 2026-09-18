@@ -43,13 +43,14 @@ jobs:
       - name: Start PreFormServer (downloads it from Formlabs on first start)
         run: |
           mkdir -p "$PWD/jobs"
-          docker run -d --name preform -p 127.0.0.1:44388:44388 -v "$PWD/jobs:/jobs" preform-linux:ci
+          docker run -d --name preform -p 127.0.0.1:44388:44388 -v "$PWD/jobs:/jobs" -e WINEDEBUG=-all,err+all preform-linux:ci
       - name: Wait until the API answers
         run: |
           for i in $(seq 1 120); do
             code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://127.0.0.1:44388/ || true)
             if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then echo "up after ${i}x5s (HTTP $code)"; exit 0; fi
             if [ "$(docker inspect -f '{{.State.Running}}' preform)" != "true" ]; then echo "container exited"; docker logs preform; exit 1; fi
+            [ $((i % 12)) -eq 0 ] && docker logs --tail 3 preform 2>&1
             sleep 5
           done
           echo "timed out"; docker logs preform; exit 1
@@ -86,7 +87,7 @@ jobs:
         run: bin/preform-linux wine cmd /c "echo hello from wine && ver"
       - name: Run PreFormServer in the background
         env:
-          WINEDEBUG: "-all,+err,+loaddll"
+          WINEDEBUG: "-all,err+all,+loaddll"
         run: |
           nohup bin/preform-linux run >preform.log 2>&1 &
           echo $! >preform.pid
