@@ -184,7 +184,9 @@ cmd_install() {
     local tmp
     mkdir -p "$PREFORM_LINUX_HOME"
     tmp="$(mktemp -d "$PREFORM_LINUX_HOME/tmp.XXXXXX")"
-    trap 'rm -rf "$tmp"' EXIT
+    # Expand now: tmp is local to this function and gone by the time the trap runs.
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmp'" EXIT
     log "downloading PreFormServer $version (about 330 MB) from $url"
     curl -fL --max-time 1800 --max-filesize 1073741824 --retry 3 -A "preform-linux/$PREFORM_LINUX_VERSION" -o "$tmp/preform.zip" "$url"
     check_zip_entries "$tmp/preform.zip"
