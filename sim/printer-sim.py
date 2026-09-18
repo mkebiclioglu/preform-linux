@@ -77,6 +77,11 @@ def compat(args):
                                 "flx": {"compatible": [1, 2, 3, 4, 5, 6, 7, 8]}, "build": {"num": [21, "dev"]}},
                 "PF_updating": {"compatible": [1, 2, 3]},
                 "PF_log_download": {"formule": {"logDownload": {"compatible": [1, 2]}}}}
+    if c == "big":   # everything newer than PreForm itself, in case the job needs a floor
+        return {"PF_printing": {"compatible": [1, 2, 3, 4, 5, 6, 7, 8], "formule": {"compatible": [1, 2, 3, 4, 5, 6, 7, 8]},
+                                "flx": {"compatible": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]}, "build": {"num": [99, 9, 9]}},
+                "PF_updating": {"compatible": [1, 2, 3, 4]},
+                "PF_log_download": {"formule": {"logDownload": {"compatible": [1, 2, 3]}}}}
     if c == "minimal":
         return {"PF_printing": {"compatible": 1}, "PF_updating": {"compatible": 1}}
     if c == "empty":
@@ -185,7 +190,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--bind", default="0.0.0.0")
     p.add_argument("--port", type=int, default=35)
-    p.add_argument("--compat", default="mirror", choices=["mirror", "wide", "minimal", "empty"])
+    p.add_argument("--compat", default="mirror", choices=["mirror", "wide", "big", "minimal", "empty"])
     p.add_argument("--product", default="Form 4")
     p.add_argument("--machine", default="FORM-4-0")
     p.add_argument("--material", default="FLGPBK05")
