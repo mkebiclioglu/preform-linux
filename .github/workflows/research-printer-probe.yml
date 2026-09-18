@@ -1,0 +1,171 @@
+name: Research printer protocol probe
+
+# What does PreFormServer say to a printer, and what does it need to hear back?
+# Round 3: a string dump of the release for the protocol vocabulary, and a fake
+# printer (research/printer-sim.py) answering the port-35 probe in several shapes.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  strings:
+    name: Protocol vocabulary from the release binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Download the latest PreFormServer release
+        run: |
+          url=$(curl -fsSL -A preform-linux-research https://formlabs.com/support/Formlabs-API-downloads-and-release-notes \
+            | grep -oE 'https://downloads\.formlabs\.com/PreFormServer/Release/[0-9.]+/PreForm_Server_win_[A-Za-z0-9._-]+\.zip' | sort -u | sort -V | tail -1)
+          echo "$url"; curl -fsSL -o ps.zip "$url"; unzip -q ps.zip -d ps; find ps -maxdepth 3 | head -50
+      - name: Which binaries carry PROTOCOL_METHOD_ strings
+        run: |
+          for f in $(find ps -iname '*.exe' -o -iname '*.dll'); do
+            n=$( (strings -n 8 "$f"; strings -n 8 -e l "$f") | grep -c 'PROTOCOL_METHOD_' || true)
+            [ "$n" -gt 0 ] && echo "$n $f"
+          done | sort -rn | tee carriers.txt
+      - name: Every protocol method
+        run: |
+          f=$(head -1 carriers.txt | awk '{print $2}')
+          (strings -n 8 "$f"; strings -n 8 -e l "$f") | grep -oE 'PROTOCOL_[A-Z_]+' | sort | uniq -c | sort -rn
+      - name: Strings around GET_INFORMATION (ASCII, then UTF-16)
+        run: |
+          f=$(head -1 carriers.txt | awk '{print $2}')
+          strings -n 4 "$f" > ascii.txt; strings -n 4 -e l "$f" > utf16.txt
+          echo "== ascii"; grep -n -B60 -A60 'PROTOCOL_METHOD_GET_INFORMATION' ascii.txt | head -400
+          echo "== utf16"; grep -n -B60 -A60 'PROTOCOL_METHOD_GET_INFORMATION' utf16.txt | head -400
+      - name: Key-like identifiers and machine types
+        run: |
+          echo "== formule"; cat ascii.txt utf16.txt | grep -i formule | sort -u | head -40
+          echo "== machine type codes"; cat ascii.txt utf16.txt | grep -oE '\b[A-Z]{4}-[0-9]-[0-9]\b' | sort | uniq -c | sort -rn
+          echo "== PascalCase keys of interest"; cat ascii.txt utf16.txt | grep -E '^(Serial|Firmware|Product|Machine|Printer|Status|Protocol|Result|Response|Error|Parameters|Payload|Body|Attachment|Version|Method|Id|Job|Print|Tank|Cartridge|Device|Info)[A-Za-z]{0,40}$' | sort | uniq -c | sort -rn | head -200
+          echo "== camelCase keys of interest"; cat ascii.txt utf16.txt | grep -E '^(serial|firmware|product|machine|printer|status|protocol|result|response|error|parameters|payload|body|attachment|version|method|id|job|print|tank|cartridge|device|info)[A-Za-z_]{0,40}$' | sort | uniq -c | sort -rn | head -200
+      - name: Pack the dumps
+        run: gzip -k ascii.txt utf16.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: strings
+          path: |
+            ascii.txt.gz
+            utf16.txt.gz
+            carriers.txt
+
+  probe:
+    name: Fake printer (shim ${{ matrix.shim }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shim: ["0"]
+    env:
+      PREFORM_SHIM: ${{ matrix.shim }}
+      WINEDEBUG: "-all,err+all"
+      PREFORM_STARTUP_TIMEOUT: "400"
+      NET: 198.51.100
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install WineHQ devel, mingw-w64, Xvfb, osslsigncode
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo mkdir -pm755 /etc/apt/keyrings
+          sudo curl -fsSL https://dl.winehq.org/wine-builds/winehq.key -o /etc/apt/keyrings/winehq-archive.key
+          sudo curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources -o /etc/apt/sources.list.d/winehq-noble.sources
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends winehq-devel gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev binutils-mingw-w64-x86-64 make xvfb xauth osslsigncode libgl1-mesa-dri libegl1
+          wine --version
+      - run: bin/preform-linux install
+      - name: Fake printers on loopback, one reply shape each
+        run: |
+          sudo ip addr add "$NET.10/32" dev lo
+          sudo nohup python3 research/printer-sim.py --bind "$NET.10" --silent >sim-silent.log 2>&1 &
+          for v in 1 2 3 4 5 6 7 8 9; do
+            sudo ip addr add "$NET.2$v/32" dev lo
+            sudo nohup python3 research/printer-sim.py --bind "$NET.2$v" --variant "$v" >"sim-$v.log" 2>&1 &
+          done
+          sleep 1; sudo ss -ltnp | grep ':35 ' | wc -l
+      - name: Run PreFormServer in the background
+        run: |
+          nohup bin/preform-linux run >preform.log 2>&1 &
+          echo $! >preform.pid
+          for i in $(seq 1 120); do
+            code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://127.0.0.1:44388/ || true)
+            if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then echo "up after ${i}x5s (HTTP $code)"; exit 0; fi
+            kill -0 "$(cat preform.pid)" 2>/dev/null || { echo "exited"; cat preform.log; exit 1; }
+            sleep 5
+          done
+          echo "timed out"; cat preform.log; exit 1
+      - name: Probe each fake printer
+        run: |
+          B=http://127.0.0.1:44388
+          before=$(wc -l <preform.log)
+          for ip in "$NET.21" "$NET.22" "$NET.23" "$NET.24" "$NET.25" "$NET.26" "$NET.27" "$NET.28" "$NET.29"; do
+            echo "=== $ip"
+            PREFORM_PRINTERS_TIMEOUT=8 bin/preform-linux printers "$ip" 2>&1 | grep -v '^{' || true
+            curl -sS $B/devices/ | python3 -c '
+          import json,sys
+          for x in json.load(sys.stdin)["devices"]:
+              if x.get("connection_type") != "VIRTUAL": print("NON-VIRTUAL DEVICE:", json.dumps(x)[:600])'
+          done
+          echo "=== PreFormServer log lines since the probes started (minus HTTP chatter)"
+          tail -n +"$before" preform.log | grep -v -E 'Received (GET|POST)|incoming connection|disconnected|QObject::connect' | head -80
+      - name: What the fake printers received and sent
+        if: always()
+        run: for f in sim-*.log; do echo "--- $f"; grep -v '\] sent' "$f" | head -12; done
+      - name: Print to the virtual Form 4 and the virtual Fuse 1+
+        run: |
+          python3 - >cube.stl <<'PY'
+          s = 10
+          v = [(0,0,0),(s,0,0),(s,s,0),(0,s,0),(0,0,s),(s,0,s),(s,s,s),(0,s,s)]
+          tris = [(0,2,1),(0,3,2),(4,5,6),(4,6,7),(0,1,5),(0,5,4),(1,2,6),(1,6,5),(2,3,7),(2,7,6),(3,0,4),(3,4,7)]
+          print("solid cube")
+          for t in tris:
+              print(" facet normal 0 0 0\n  outer loop")
+              for i in t: print("   vertex %d %d %d" % v[i])
+              print("  endloop\n endfacet")
+          print("endsolid cube")
+          PY
+          B=http://127.0.0.1:44388
+          j() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1"; }
+          op() { local acc id o; acc=$(curl -sS -X POST -H 'Content-Type: application/json' -d "$2" "$B$1?async=true"); id=$(j 'd.get("operationId","")' <<<"$acc")
+                 for i in $(seq 1 120); do o=$(curl -sS "$B/operations/$id/"); grep -qE '"status" *: *"(SUCCEEDED|FAILED)"' <<<"$o" && break; sleep 2; done; echo "$o" | head -c 800; echo; }
+          scene() { curl -sS -X POST -H 'Content-Type: application/json' -d "{\"machine_type\":\"$1\",\"material_code\":\"$2\",\"layer_thickness_mm\":$3}" $B/scene/ | j 'd["id"]'; }
+          echo "=== Form 4 (FORM-4-0, FLGPBK05)"
+          sid=$(scene FORM-4-0 FLGPBK05 0.1)
+          op "/scene/$sid/import-model/" "{\"file\":\"Z:$PWD/cube.stl\"}" >/dev/null
+          op "/scene/$sid/auto-support/" '{}' >/dev/null
+          echo "--- print to 'Form 4'"; op "/scene/$sid/print/" '{"printer":"Form 4","job_name":"virtual-form4"}'
+          echo "--- print_now to 'Form 4'"; op "/scene/$sid/print/" '{"printer":"Form 4","job_name":"virtual-form4-now","print_now":true}'
+          echo "=== Fuse 1+ (FS30-1-0, first listed material)"
+          mat=$(curl -sS $B/list-materials/ | python3 -c '
+          import json,sys
+          for p in json.load(sys.stdin)["printer_types"]:
+              if "FS30-1-0" in p["supported_machine_type_ids"]:
+                  print(p["materials"][0]["material_settings"][0]["scene_settings"]["material_code"]); break')
+          echo "material $mat"
+          fsid=$(scene FS30-1-0 "$mat" 0.11)
+          op "/scene/$fsid/import-model/" "{\"file\":\"Z:$PWD/cube.stl\"}" >/dev/null
+          echo "--- auto-pack"; op "/scene/$fsid/auto-pack/" '{}' | head -c 300; echo
+          echo "--- print to 'Fuse 1+'"; op "/scene/$fsid/print/" '{"printer":"Fuse 1+","job_name":"virtual-fuse"}'
+          echo "=== Fuse X1 scene (FUSX-1-0 from the binary's machine type table)"
+          curl -sS -X POST -H 'Content-Type: application/json' -d '{"machine_type":"FUSX-1-0","material_code":"FLP12B01","layer_thickness_mm":0.11}' $B/scene/ | head -c 400; echo
+          curl -sS -X POST -H 'Content-Type: application/json' -d '{"machine_type":"FUSX-1-0","material_code":"FLP11C01","layer_thickness_mm":0.11}' $B/scene/ | head -c 400; echo
+          echo "=== devices"; curl -sS $B/devices/ | python3 -c '
+          import json,sys
+          for x in json.load(sys.stdin)["devices"]: print(x["id"], x.get("ip_address"), x.get("status"), x.get("connection_type"))'
+      - name: PreFormServer log
+        if: always()
+        run: grep -v -E 'Received (GET|POST)|incoming connection|disconnected' preform.log | tail -n 120
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-shim-${{ matrix.shim }}
+          path: |
+            sim-*.log
+            preform.log
+      - name: Stop
+        if: always()
+        run: kill -TERM "$(cat preform.pid)" 2>/dev/null; sleep 5; wineserver -k 2>/dev/null || true

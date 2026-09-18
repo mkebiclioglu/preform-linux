@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1 (2026-09-18)
+
+- The repository and the GHCR image are public.
+- The smoke test (and so CI) sends the prepared job to PreFormServer's built-in
+  virtual Form 4 and checks for a `job_id`: the print path is exercised on every run.
+- CI probes 198.51.100.1 instead of 192.0.2.1: PreFormServer parks its virtual
+  printers on 192.0.2.x, so the old address was a virtual Form 3B.
+- `research/`: what a directed printer probe looks like on the wire (TCP port 35,
+  length-prefixed JSON, `PROTOCOL_METHOD_GET_INFORMATION`), the protocol vocabulary
+  from the binary, a fake printer to experiment with, and the workflow that runs it.
+  Verified that the probe goes out under Wine with and without the shim.
+- README: printers by IP, virtual printers as a dry run, Fuse X1 status.
+
 ## 0.2.0 (2026-09-18)
 
 Automation-ready release.

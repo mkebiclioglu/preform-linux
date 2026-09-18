@@ -31,7 +31,7 @@
 #   WINEDEBUG                 Wine log channels (default: -all)
 set -euo pipefail
 
-PREFORM_LINUX_VERSION="0.2.0"
+PREFORM_LINUX_VERSION="0.2.1"
 PREFORM_LINUX_HOME="${PREFORM_LINUX_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/preform-linux}"
 PREFORM_PORT="${PREFORM_PORT:-44388}"
 PREFORM_VERSION="${PREFORM_VERSION:-latest}"
