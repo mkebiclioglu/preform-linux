@@ -169,3 +169,65 @@ jobs:
       - name: Stop
         if: always()
         run: kill -TERM "$(cat preform.pid)" 2>/dev/null; sleep 5; wineserver -k 2>/dev/null || true
+
+  scene-types:
+    name: Which machine types can the Local API create scenes for
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      WINEDEBUG: "-all,err+all"
+      PREFORM_STARTUP_TIMEOUT: "400"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install WineHQ devel, Xvfb, osslsigncode
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo mkdir -pm755 /etc/apt/keyrings
+          sudo curl -fsSL https://dl.winehq.org/wine-builds/winehq.key -o /etc/apt/keyrings/winehq-archive.key
+          sudo curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources -o /etc/apt/sources.list.d/winehq-noble.sources
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends winehq-devel xvfb xauth osslsigncode libgl1-mesa-dri libegl1
+      - run: bin/preform-linux install
+      - name: Run PreFormServer in the background
+        run: |
+          nohup bin/preform-linux run >preform.log 2>&1 &
+          echo $! >preform.pid
+          for i in $(seq 1 120); do
+            code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://127.0.0.1:44388/ || true)
+            if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then echo "up after ${i}x5s"; exit 0; fi
+            kill -0 "$(cat preform.pid)" 2>/dev/null || { echo "exited"; cat preform.log; exit 1; }
+            sleep 5
+          done
+          echo "timed out"; cat preform.log; exit 1
+      - name: Scene creation matrix
+        run: |
+          B=http://127.0.0.1:44388
+          try() { printf '%-10s %-10s %-5s -> ' "$1" "$2" "$3"; curl -sS -X POST -H 'Content-Type: application/json' -d "{\"machine_type\":\"$1\",\"material_code\":\"$2\",\"layer_thickness_mm\":$3}" $B/scene/ | head -c 220; echo; }
+          echo "== Fuse X1 with the one material the binary embeds for it (FLP12G01 at 110 um), and others"
+          for m in FLP12G01 FLP12B01 FLP11C01 FLP12W01 FLTP9G01 FLPLPG01; do try FUSX-1-0 $m 0.11; done
+          try FUSX-1-0 FLP12G01 0.1
+          echo "== controls: listed types"
+          try FS30-1-0 FLP12G01 0.11
+          try FS30-1-0 FLP12B01 0.11
+          try PILK-1-0 FLP12B01 0.11
+          try FORM-4-0 FLGPBK05 0.1
+          echo "== unlisted / wrong"
+          for t in FUSL-2-0 SIFT-1-0 CLRK-1-0 CURL-1-0 CHEW-1-0 WSHL-1-0 CELL-0-0 UNKN-0-0 XXXX-0-0 FUSE-1-0 FORM-3-1 DGJR-1-0 DGSR-1-0 FRBL-3-0 FRMB-3-1 FRML-4-0 FORM-2-0; do try $t FLP12G01 0.11; done
+          echo "== list-materials: labels and machine ids"
+          curl -sS $B/list-materials/ | python3 -c '
+          import json,sys
+          for p in json.load(sys.stdin)["printer_types"]: print(p["label"], p["supported_machine_type_ids"], [m.get("label") for m in p["materials"]][:12])'
+          echo "== list-materials with a machine_type query"
+          curl -sS "$B/list-materials/?machine_type=FUSX-1-0" | head -c 600; echo
+          echo "== devices: the virtual Fuse X1 entry in full"
+          curl -sS $B/devices/ | python3 -c '
+          import json,sys
+          for x in json.load(sys.stdin)["devices"]:
+              if x["id"]=="Fuse X1": print(json.dumps(x, indent=1))'
+          curl -sS "$B/devices/Fuse%20X1/" | head -c 1500; echo
+      - name: PreFormServer log
+        if: always()
+        run: grep -v -E 'Received (GET|POST)|incoming connection|disconnected' preform.log | tail -n 60
+      - name: Stop
+        if: always()
+        run: kill -TERM "$(cat preform.pid)" 2>/dev/null; sleep 5; wineserver -k 2>/dev/null || true
