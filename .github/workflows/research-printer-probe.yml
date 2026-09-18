@@ -2,7 +2,7 @@ name: Research printer protocol probe
 
 # What does PreFormServer say to a printer, and what does it need to hear back?
 # Round 3: a string dump of the release for the protocol vocabulary, and a fake
-# printer (research/printer-sim.py) answering the port-35 probe in several shapes.
+# printer (sim/printer-sim.py) answering the port-35 probe in several shapes.
 on:
   workflow_dispatch:
 
@@ -84,10 +84,12 @@ jobs:
           for c in mirror wide minimal empty; do
             i=$((i+1)); ip="$NET.2$i"
             sudo ip addr add "$ip/32" dev lo
-            sudo nohup python3 research/printer-sim.py --bind "$ip" --compat "$c" --serial "SimForm4-$c" >"sim-$c.log" 2>&1 &
+            sudo nohup python3 sim/printer-sim.py --bind "$ip" --compat "$c" --serial "SimForm4-$c" >"sim-$c.log" 2>&1 &
           done
           sudo ip addr add "$NET.30/32" dev lo
-          sudo nohup python3 research/printer-sim.py --bind "$NET.30" --compat mirror --machine FS30-1-0 --product "Fuse 1+" --material FLP12B01 --serial "SimFuse-mirror" >"sim-fuse.log" 2>&1 &
+          sudo nohup python3 sim/printer-sim.py --bind "$NET.30" --compat mirror --machine FS30-1-0 --product "Fuse 1+" --material FLP12B01 --serial "SimFuse-mirror" >"sim-fuse.log" 2>&1 &
+          sudo ip addr add "$NET.31/32" dev lo
+          sudo nohup python3 sim/printer-sim.py --bind "$NET.31" --compat mirror --machine FUSX-1-0 --product "Fuse X1" --material FLP12G01 --serial "SimFuseX1" >"sim-fusex1.log" 2>&1 &
           sleep 1; sudo ss -ltnp | grep -c ':35 '
       - name: Run PreFormServer in the background
         run: |
@@ -104,7 +106,7 @@ jobs:
         run: |
           B=http://127.0.0.1:44388
           before=$(wc -l <preform.log)
-          for ip in "$NET.21" "$NET.22" "$NET.23" "$NET.24" "$NET.30"; do
+          for ip in "$NET.21" "$NET.22" "$NET.23" "$NET.24" "$NET.30" "$NET.31"; do
             echo "=== $ip"
             PREFORM_PRINTERS_TIMEOUT=15 bin/preform-linux printers "$ip" 2>&1 | grep -v '^{' || true
           done
@@ -141,9 +143,21 @@ jobs:
           op "/scene/$sid/import-model/" "{\"file\":\"Z:$PWD/cube.stl\"}" >/dev/null
           op "/scene/$sid/auto-support/" '{}' >/dev/null
           echo "--- print to simulated printer $target"; op "/scene/$sid/print/" "{\"printer\":\"$target\",\"job_name\":\"sim-job\"}"
+          echo "--- device record of $target"; curl -sS "$B/devices/$target/" | head -c 700; echo
+          echo "=== Fuse 1+ scene to the simulated Fuse 1+"
+          f1=$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"machine_type":"FS30-1-0","material_code":"FLP12B01","layer_thickness_mm":0.11}' $B/scene/ | j 'd["id"]')
+          op "/scene/$f1/import-model/" "{\"file\":\"Z:$PWD/cube.stl\"}" >/dev/null
+          op "/scene/$f1/auto-pack/" '{}' >/dev/null
+          op "/scene/$f1/print/" '{"printer":"SimFuse-mirror","job_name":"sim-fuse"}'
+          echo "=== Fuse X1 scene: which layout operations work, then print to the simulated Fuse X1"
+          fx=$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"machine_type":"FUSX-1-0","material_code":"FLP12G01","layer_thickness_mm":0.11}' $B/scene/ | j 'd["id"]')
+          op "/scene/$fx/import-model/" "{\"file\":\"Z:$PWD/cube.stl\"}" >/dev/null
+          for step in auto-layout auto-pack fill-build-chamber pack-and-cage; do echo "--- $step"; op "/scene/$fx/$step/" '{}' | head -c 300; echo; done
+          echo "--- print to SimFuseX1"; op "/scene/$fx/print/" '{"printer":"SimFuseX1","job_name":"sim-fusex1"}'
+          echo "--- print by ip"; op "/scene/$fx/print/" "{\"printer\":\"$NET.31\",\"job_name\":\"sim-fusex1-ip\"}"
       - name: What the fake printers received and sent
         if: always()
-        run: for f in sim-*.log; do echo "--- $f"; cut -c1-400 "$f" | head -60; done
+        run: for f in sim-*.log; do echo "--- $f"; grep -v '\] sent' "$f" | cut -c1-330 | head -40; done
       - name: Print to the virtual Form 4 and the virtual Fuse 1+
         run: |
           python3 - >cube.stl <<'PY'
