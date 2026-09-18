@@ -102,5 +102,11 @@ elif [ "$ALLOW_SCREENSHOT_FAIL" = 1 ]; then echo "[WARN] save-screenshot failed 
 else fail "save-screenshot"; fi
 
 api DELETE "/scene/$sid/" >/dev/null 2>&1 || true
+
+# Printer discovery must at least fail cleanly under Wine: a broadcast scan (no mDNS
+# answers arrive) and a directed probe of an address nothing answers on (TEST-NET-1).
+if d="$(op /discover-devices/ '{"timeout_seconds":2}')"; then pass "discover-devices (broadcast): $(json "d.get('count', 0)" <<<"$d") found"; else fail "discover-devices (broadcast)"; fi
+if d="$(op /discover-devices/ '{"ip_address":"192.0.2.1","timeout_seconds":3}')"; then pass "discover-devices at 192.0.2.1: $(json "d.get('count', 0)" <<<"$d") found (expected 0)"; else fail "discover-devices at 192.0.2.1"; fi
+if d="$(api GET /devices/)"; then pass "devices: $(json "d.get('count', len(d.get('devices', [])))" <<<"$d") known"; else fail "devices"; fi
 echo "[smoke] $failures failure(s)"
 [ "$failures" = 0 ]

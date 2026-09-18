@@ -21,7 +21,7 @@ RUN dpkg --add-architecture i386 \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl unzip xvfb xauth osslsigncode openssl \
-      libgl1 libegl1 libglx-mesa0 libgl1-mesa-dri fonts-dejavu-core tini procps iproute2 util-linux \
+      libgl1 libegl1 libglx-mesa0 libgl1-mesa-dri fonts-dejavu-core libgnutls30t64 tini procps iproute2 util-linux \
  && mkdir -pm755 /etc/apt/keyrings \
  && curl -fsSL https://dl.winehq.org/wine-builds/winehq.key -o /etc/apt/keyrings/winehq-archive.key \
  && curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources -o /etc/apt/sources.list.d/winehq-noble.sources \
@@ -57,6 +57,11 @@ USER preform
 RUN if [ "$BUNDLE" = "1" ]; then preform-linux install; fi
 # Back to root: the entrypoint aligns uid/gid with PUID/PGID, fixes ownership and drops privileges.
 USER root
+
+LABEL org.opencontainers.image.title="preform-linux" \
+      org.opencontainers.image.description="Formlabs PreFormServer (Local API) on Linux under Wine, headless. Contains no Formlabs software: PreFormServer is downloaded and signature-checked on first start." \
+      org.opencontainers.image.source="https://github.com/mkebiclioglu/preform-linux" \
+      org.opencontainers.image.licenses="MIT"
 
 VOLUME ["/data", "/jobs"]
 EXPOSE 44388

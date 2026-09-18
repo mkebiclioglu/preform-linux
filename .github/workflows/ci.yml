@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -10,6 +11,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   lint:
@@ -44,7 +48,9 @@ jobs:
         run: |
           mkdir -p "$PWD/jobs"
           docker run -d --name preform -p 127.0.0.1:44388:44388 -v "$PWD/jobs:/jobs" \
-            -e PUID="$(id -u)" -e PGID="$(id -g)" -e WINEDEBUG=-all,err+all preform-linux:ci
+            -e PUID="$(id -u)" -e PGID="$(id -g)" -e WINEDEBUG=-all,err+all \
+            -e PREFORM_PRINTERS=192.0.2.1 -e PREFORM_PRINTERS_TIMEOUT=3 -e PREFORM_PRINTERS_INTERVAL=0 \
+            preform-linux:ci
       - name: Wait until the API answers
         run: |
           for i in $(seq 1 120); do
@@ -60,6 +66,14 @@ jobs:
           PREFORM_URL: http://127.0.0.1:44388
           SMOKE_REMOTE_DIR: Z:/jobs
         run: SMOKE_LOCAL_DIR="$PWD/jobs" examples/smoke.sh
+      - name: Configured printers were probed at start (PREFORM_PRINTERS)
+        run: |
+          for i in $(seq 1 30); do docker logs preform 2>&1 | grep -q 'no printer answered at 192.0.2.1' && break; sleep 2; done
+          docker logs preform 2>&1 | grep -E 'ready at|probing|printer answered' || { echo "no probe log lines"; exit 1; }
+      - name: printers and doctor subcommands against the running server
+        run: |
+          docker exec -e PREFORM_PRINTERS_TIMEOUT=3 preform preform-linux printers 192.0.2.1
+          docker exec preform preform-linux doctor
       - name: Doctor
         if: always()
         run: docker exec preform preform-linux doctor || true
@@ -75,6 +89,7 @@ jobs:
     timeout-minutes: 45
     env:
       PREFORM_SHIM: "1" # exercise the shim path even though this Wine does not need it
+      PREFORM_SHIM_TRACE: "1" # and log the mDNS queries PreFormServer makes
     steps:
       - uses: actions/checkout@v5
       - name: Install WineHQ devel, mingw-w64, Xvfb, osslsigncode
@@ -108,9 +123,53 @@ jobs:
           echo "timed out"; cat preform.log; exit 1
       - name: Smoke test through the API
         run: SMOKE_LOCAL_DIR="$HOME/jobs" SMOKE_REMOTE_DIR="Z:$HOME/jobs" examples/smoke.sh
+      - name: printers subcommand (directed probe of an address nothing answers on)
+        run: PREFORM_PRINTERS_TIMEOUT=3 bin/preform-linux printers 192.0.2.1
+      - name: mDNS queries PreFormServer asked the shim for
+        run: grep -F '[dnsapi-shim]' preform.log | sort | uniq -c || echo "(none logged)"
       - name: Logs
         if: always()
         run: tail -n 200 preform.log
       - name: Stop
         if: always()
         run: kill -TERM "$(cat preform.pid)" 2>/dev/null; sleep 5; wineserver -k 2>/dev/null || true
+
+  publish:
+    name: Publish image to GHCR
+    # Every green main build pushes :main; a v* tag pushes :<version> and :latest.
+    if: github.event_name == 'push'
+    needs: [lint, shim, docker, bare-metal-shim]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tag matches the CLI version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: test "v$(bin/preform-linux version)" = "${GITHUB_REF_NAME}"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

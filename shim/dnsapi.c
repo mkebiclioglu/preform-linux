@@ -23,6 +23,7 @@
  * Build: make (needs x86_64-w64-mingw32-gcc).
  */
 #include <windows.h>
+#include <stdio.h>
 
 typedef LONG DNS_STATUS;
 
@@ -32,10 +33,53 @@ typedef LONG DNS_STATUS;
 
 /* --- what PreFormServer.exe imports --------------------------------------- */
 
+/* MDNS_QUERY_REQUEST from windns.h (Windows 10 1809+); only the leading fields are read. */
+typedef struct
+{
+    ULONG Version;
+    ULONG ulRefCount;
+    const WCHAR *Query;
+    WORD QueryType;
+    ULONG64 QueryOptions;
+    ULONG InterfaceIndex;
+    void *pQueryCallback;
+    void *pQueryContext;
+    BOOL fAnswerReceived;
+    ULONG ulResendCount;
+} MDNS_QUERY_REQUEST_SHIM;
+
+/* With PREFORM_SHIM_TRACE=1 in the environment, say what PreFormServer asks mDNS for.
+ * That is the input a real implementation (here or in Wine) has to answer. */
+static int trace_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        char v[8];
+        DWORD n = GetEnvironmentVariableA("PREFORM_SHIM_TRACE", v, sizeof(v));
+        enabled = (n == 1 && v[0] == '1');
+    }
+    return enabled;
+}
+
+static void trace_query(const MDNS_QUERY_REQUEST_SHIM *req)
+{
+    char name[256] = "(null)";
+    if (!trace_enabled()) return;
+    if (req && req->Query) WideCharToMultiByte(CP_UTF8, 0, req->Query, -1, name, sizeof(name) - 1, NULL, NULL);
+    if (req)
+        fprintf(stderr, "[dnsapi-shim] DnsStartMulticastQuery version=%lu query=\"%s\" type=%u options=0x%llx interface=%lu\n",
+                (unsigned long)req->Version, name, (unsigned)req->QueryType,
+                (unsigned long long)req->QueryOptions, (unsigned long)req->InterfaceIndex);
+    else
+        fprintf(stderr, "[dnsapi-shim] DnsStartMulticastQuery request=NULL\n");
+    fflush(stderr);
+}
+
 DNS_STATUS WINAPI DnsStartMulticastQuery(void *request, void *handle)
 {
-    (void)request;
     (void)handle;
+    trace_query((const MDNS_QUERY_REQUEST_SHIM *)request);
     /* Report success and never deliver a result: no mDNS answers ever arrive. */
     return ERROR_SUCCESS;
 }

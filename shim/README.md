@@ -11,3 +11,10 @@ when Wine is new enough. Force it on or off with `PREFORM_SHIM=1` / `PREFORM_SHI
 make        # builds dnsapi.dll
 make check  # verifies the exports
 ```
+
+Set `PREFORM_SHIM_TRACE=1` (bare metal, or `-e PREFORM_SHIM_TRACE=1` in Docker with
+`PREFORM_SHIM=1`) and the shim logs every `DnsStartMulticastQuery` request
+PreFormServer makes: the mDNS service name, record type and options. That is the
+specification for a real implementation, which is the next step if LAN
+discovery under Wine is wanted (see the README's *Printers* section for what
+works without it).

@@ -7,7 +7,7 @@
 # --user it skips all of that and runs as whoever you chose.
 #
 #   run [args]   install PreFormServer if needed, then run it (the default)
-#   <anything>   any preform-linux subcommand: doctor, install, wine ...
+#   <anything>   any preform-linux subcommand: doctor, printers, login, install, wine ...
 set -euo pipefail
 
 if [ "$(id -u)" = "0" ]; then
@@ -21,14 +21,12 @@ if [ "$(id -u)" = "0" ]; then
       chown -R "$PUID:$PGID" "$d"
     fi
   done
+  # Only the variables preform-linux understands cross the privilege drop
+  # (PREFORM_*, FORMLABS_* account settings, QT_* and WINE* tuning).
+  passthru=()
+  while IFS= read -r name; do passthru+=("$name=${!name}"); done < <(compgen -e | grep -E '^(PREFORM_|FORMLABS_|QT_|WINE)' || true)
   exec setpriv --reuid="$PUID" --regid="$PGID" --init-groups --reset-env \
-    env HOME=/home/preform PATH="$PATH" \
-        PREFORM_LINUX_HOME="${PREFORM_LINUX_HOME:-/data}" PREFORM_PORT="${PREFORM_PORT:-44388}" \
-        PREFORM_VERSION="${PREFORM_VERSION:-latest}" PREFORM_SHIM_DLL="${PREFORM_SHIM_DLL:-}" \
-        PREFORM_SHIM="${PREFORM_SHIM:-}" PREFORM_TELEMETRY="${PREFORM_TELEMETRY:-}" \
-        PREFORM_INSTALL_UNVERIFIED="${PREFORM_INSTALL_UNVERIFIED:-}" PREFORM_WINE_UNCHECKED="${PREFORM_WINE_UNCHECKED:-}" \
-        QT_OPENGL="${QT_OPENGL:-software}" WINEDEBUG="${WINEDEBUG:--all}" \
-    "$0" "$@"
+    env HOME=/home/preform PATH="$PATH" "${passthru[@]}" "$0" "$@"
 fi
 
 case "${1:-run}" in

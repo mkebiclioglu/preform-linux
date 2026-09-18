@@ -4,6 +4,8 @@
 #   preform-linux install [--force]   download, verify and install PreFormServer, set up the Wine prefix
 #   preform-linux run [-- args]       start PreFormServer in the foreground (Xvfb + Wine)
 #   preform-linux doctor              report what is installed and what is missing
+#   preform-linux printers [ip ...]   probe printers by IP on the running server, then list devices
+#   preform-linux login               log the running server in to Formlabs (Fleet Control, Dashboard)
 #   preform-linux wine <args>         run a Wine command inside the preform-linux prefix
 #   preform-linux uninstall           remove the install directory and Wine prefix
 #
@@ -11,21 +13,32 @@
 #   PREFORM_LINUX_HOME        install root (default: $XDG_DATA_HOME/preform-linux)
 #   PREFORM_PORT              HTTP port PreFormServer listens on (default: 44388)
 #   PREFORM_VERSION           "latest" (default) or an exact release such as 3.63.0
+#   PREFORM_PRINTERS          printer IPs/hostnames (comma or space separated) probed once the server is up
+#   PREFORM_PRINTERS_TIMEOUT  seconds to wait for each probed printer (default: 10)
+#   PREFORM_PRINTERS_INTERVAL seconds between re-probes so /devices/ stays fresh (default: 600; 0 = once)
+#   FORMLABS_USERNAME, FORMLABS_PASSWORD, FORMLABS_ACCESS_TOKEN
+#                             Formlabs account; the server logs in once it is up (Fleet Control, Dashboard)
+#   FORMLABS_PASSWORD_FILE, FORMLABS_ACCESS_TOKEN_FILE
+#                             read the secret from a file instead (Docker/Podman secrets)
 #   PREFORM_TELEMETRY         1 allows PreFormServer telemetry (default: off)
 #   PREFORM_INSTALL_UNVERIFIED 1 accepts a download whose Authenticode signature cannot be checked
 #   PREFORM_SHIM              0 never installs the dnsapi shim, 1 always does (default: only when Wine < 11.13)
 #   PREFORM_WINE_UNCHECKED    1 skips the Wine >= 11.5 requirement check
 #   PREFORM_XVFB              0 uses the existing $DISPLAY, 1 always starts Xvfb (default: Xvfb when no DISPLAY)
 #   PREFORM_STARTUP_TIMEOUT   seconds to wait for "READY FOR INPUT" before giving up (default: 300; 0 disables)
+#   PREFORM_SHIM_TRACE        1 makes the dnsapi shim log the mDNS queries PreFormServer asks for
 #   QT_OPENGL                 Qt renderer, default "software" (PreFormServer's bundled Mesa; no GPU needed)
 #   WINEDEBUG                 Wine log channels (default: -all)
 set -euo pipefail
 
-PREFORM_LINUX_VERSION="0.1.0"
+PREFORM_LINUX_VERSION="0.2.0"
 PREFORM_LINUX_HOME="${PREFORM_LINUX_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/preform-linux}"
 PREFORM_PORT="${PREFORM_PORT:-44388}"
 PREFORM_VERSION="${PREFORM_VERSION:-latest}"
 PREFORM_STARTUP_TIMEOUT="${PREFORM_STARTUP_TIMEOUT:-300}"
+PREFORM_PRINTERS="${PREFORM_PRINTERS:-}"
+PREFORM_PRINTERS_TIMEOUT="${PREFORM_PRINTERS_TIMEOUT:-10}"
+PREFORM_PRINTERS_INTERVAL="${PREFORM_PRINTERS_INTERVAL:-600}"
 READY_TOKEN="READY FOR INPUT"
 DOWNLOAD_PAGE="https://formlabs.com/support/Formlabs-API-downloads-and-release-notes"
 # Only this layout on this host is accepted, whatever the downloads page says.
@@ -185,6 +198,103 @@ init_prefix() {
   timeout 20 wineserver -w 2>/dev/null || { wineserver -k15 2>/dev/null; sleep 2; wineserver -k 2>/dev/null; } || true
 }
 
+# --- talking to a running PreFormServer ------------------------------------------------
+
+API_BASE="http://127.0.0.1:$PREFORM_PORT"
+
+# First top-level-ish "KEY":"value" / "KEY":123 on stdin. Good enough for the small
+# operation and device documents PreFormServer returns; no python needed in the image.
+json_str() { grep -oE "\"$1\" *: *\"[^\"]*\"" | head -n1 | sed 's/^[^:]*: *"//; s/"$//'; }
+json_num() { grep -oE "\"$1\" *: *-?[0-9]+" | head -n1 | sed 's/^[^:]*: *//'; }
+json_escape() { sed 's/[\\"]/\\&/g' <<<"$1"; }
+
+api_up() { local code; code="$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$API_BASE/" || true)"; [ "$code" != "000" ] && [ "$code" -lt 500 ]; }
+
+api_get() { curl -sS -m 30 "$API_BASE$1"; }
+
+# POST a JSON body read from a variable (never on the command line: it may hold a password).
+api_post() { printf '%s' "$2" | curl -sS -m "${3:-60}" -X POST -H 'Content-Type: application/json' -d @- "$API_BASE$1"; }
+
+# Start an async operation and wait for it. Prints the final operation document.
+# Returns 1 when it FAILED or the wait ran out.
+api_op() { # api_op PATH JSON-BODY [max-seconds]
+  local path="$1" body="$2" max="${3:-120}" accepted id deadline o
+  accepted="$(printf '%s' "$body" | curl -sS -m 30 -X POST -H 'Content-Type: application/json' -d @- "$API_BASE$path?async=true")" || return 1
+  id="$(json_str operationId <<<"$accepted")"
+  if [ -z "$id" ]; then printf '%s\n' "$accepted"; return 0; fi
+  deadline=$((SECONDS + max))
+  while :; do
+    o="$(api_get "/operations/$id/")" || return 1
+    # The operation's own status, not a device's: only these two words end an operation.
+    if grep -qE '"status" *: *"SUCCEEDED"' <<<"$o"; then printf '%s\n' "$o"; return 0; fi
+    if grep -qE '"status" *: *"FAILED"' <<<"$o"; then printf '%s\n' "$o"; return 1; fi
+    [ "$SECONDS" -lt "$deadline" ] || { printf '%s\n' "$o"; return 1; }
+    sleep 1
+  done
+}
+
+# Ask PreFormServer to look for a printer at each given IP/hostname (no mDNS needed:
+# the Local API's discover-devices probes one host directly). Prints one line per host.
+probe_printers() {
+  local ip o n name
+  for ip in "$@"; do
+    [[ "$ip" =~ ^[A-Za-z0-9._:-]+$ ]] || { log "ignoring printer address $ip (letters, digits, . _ : - only)"; continue; }
+    if o="$(api_op /discover-devices/ "{\"ip_address\":\"$ip\",\"timeout_seconds\":$PREFORM_PRINTERS_TIMEOUT}" $((PREFORM_PRINTERS_TIMEOUT + 60)))"; then
+      n="$(json_num count <<<"$o")"
+      if [ "${n:-0}" -gt 0 ]; then
+        name="$(json_str product_name <<<"$o")"
+        log "printer at $ip: ${name:-unknown model} ($(json_str id <<<"$o"))"
+      else log "no printer answered at $ip"; fi
+    else
+      log "probe of $ip failed: $(json_str message <<<"$o" | head -c 200)"
+    fi
+  done
+}
+
+configured_printers() { tr ', ' '\n\n' <<<"$PREFORM_PRINTERS" | grep -v '^$' || true; }
+
+read_secret() { # read_secret VALUE FILE -> prints VALUE, or the file's first line
+  if [ -n "$1" ]; then printf '%s' "$1"; elif [ -n "$2" ]; then [ -r "$2" ] || die "cannot read $2"; head -n1 "$2" | tr -d '\r\n'; fi
+}
+
+# Log in to Formlabs Web Services with the account from the environment, if any.
+# Returns 0 when logged in or when no account is configured, 1 when the login failed.
+account_login() {
+  local token pass body o user
+  token="$(read_secret "${FORMLABS_ACCESS_TOKEN:-}" "${FORMLABS_ACCESS_TOKEN_FILE:-}")"
+  pass="$(read_secret "${FORMLABS_PASSWORD:-}" "${FORMLABS_PASSWORD_FILE:-}")"
+  if [ -n "$token" ]; then body="{\"access_token\":\"$(json_escape "$token")\"}"
+  elif [ -n "${FORMLABS_USERNAME:-}" ] && [ -n "$pass" ]; then body="{\"username\":\"$(json_escape "$FORMLABS_USERNAME")\",\"password\":\"$(json_escape "$pass")\"}"
+  else return 0; fi
+  if o="$(api_post /login/ "$body" 90)" && ! grep -q '"error"' <<<"$o"; then
+    user="$(api_get /user/ 2>/dev/null | json_str username)"
+    log "logged in to Formlabs as ${user:-${FORMLABS_USERNAME:-token user}}; Fleet Control and Dashboard printers are now available"
+    return 0
+  fi
+  log "Formlabs login failed: $(json_str message <<<"$o" | head -c 200)"
+  return 1
+}
+
+account_configured() { [ -n "${FORMLABS_ACCESS_TOKEN:-}${FORMLABS_ACCESS_TOKEN_FILE:-}" ] || { [ -n "${FORMLABS_USERNAME:-}" ] && [ -n "${FORMLABS_PASSWORD:-}${FORMLABS_PASSWORD_FILE:-}" ]; }; }
+
+# Runs in the background once PreFormServer is up: account login, then the configured
+# printers, re-probed every PREFORM_PRINTERS_INTERVAL seconds so /devices/ stays current.
+after_ready() {
+  local flag="$1" server_pid="$2" printers
+  while [ ! -e "$flag" ]; do kill -0 "$server_pid" 2>/dev/null || return 0; sleep 1; done
+  log "PreFormServer is ready at http://0.0.0.0:$PREFORM_PORT/"
+  account_login || true
+  mapfile -t printers < <(configured_printers)
+  [ "${#printers[@]}" -gt 0 ] || return 0
+  while :; do
+    log "probing ${#printers[@]} configured printer(s): ${printers[*]}"
+    probe_printers "${printers[@]}"
+    [ "$PREFORM_PRINTERS_INTERVAL" -gt 0 ] 2>/dev/null || return 0
+    sleep "$PREFORM_PRINTERS_INTERVAL"
+    kill -0 "$server_pid" 2>/dev/null || return 0
+  done
+}
+
 # --- commands ------------------------------------------------------------------------
 
 cmd_install() {
@@ -236,6 +346,7 @@ launch_env() {
   [ "${PREFORM_TELEMETRY:-0}" = "1" ] || export DISABLE_PREFORMSERVER_TELEMETRY=1
   export QT_OPENGL="${QT_OPENGL:-software}"
   [ -f "$INSTALL_DIR/dnsapi.dll" ] && export WINEDLLOVERRIDES="dnsapi=n;$WINEDLLOVERRIDES"
+  [ "${PREFORM_SHIM_TRACE:-0}" = "1" ] && export PREFORM_SHIM_TRACE
   return 0
 }
 
@@ -269,13 +380,14 @@ cmd_run() {
     rm -f "$display_file"
   fi
 
-  local wine_pid="" watchdog_pid="" ready_flag
+  local wine_pid="" watchdog_pid="" ready_pid="" ready_flag
   ready_flag="$(mktemp)"
   rm -f "$ready_flag"
   # shellcheck disable=SC2329  # invoked through the traps below
   cleanup() {
     trap - TERM INT EXIT
     [ -n "$watchdog_pid" ] && kill "$watchdog_pid" 2>/dev/null
+    [ -n "$ready_pid" ] && kill "$ready_pid" 2>/dev/null
     if [ -n "$wine_pid" ] && kill -0 "$wine_pid" 2>/dev/null; then
       kill -TERM "$wine_pid" 2>/dev/null || true
       for _ in $(seq 1 50); do kill -0 "$wine_pid" 2>/dev/null || break; sleep 0.2; done
@@ -294,6 +406,8 @@ cmd_run() {
   # PreFormServer's output passes through a reader that notices the ready line.
   (cd "$INSTALL_DIR" && exec "$WINE" "$EXE" --port "$PREFORM_PORT" "$@") > >(relay_output "$ready_flag") 2>&1 &
   wine_pid=$!
+  after_ready "$ready_flag" "$wine_pid" &
+  ready_pid=$!
   if [ "$PREFORM_STARTUP_TIMEOUT" -gt 0 ] 2>/dev/null; then
     # A PreFormServer that never says READY (crash dialog, stuck loader) is killed so a
     # supervisor (systemd, Docker) can restart it instead of waiting forever.
@@ -344,7 +458,32 @@ cmd_doctor() {
     [ -n "$latest" ] && echo "latest release:  $latest"
   fi
   echo "port:            $PREFORM_PORT$(have ss && ss -ltn 2>/dev/null | grep -q ":$PREFORM_PORT " && echo ' (something is listening)')"
+  echo "printers:        ${PREFORM_PRINTERS:-none configured (PREFORM_PRINTERS=ip,ip probes them at start; print_to_printer also takes an IP directly)}"
+  echo "account:         $(account_configured && echo 'configured (FORMLABS_* set; login happens at start)' || echo 'not configured (only needed for Fleet Control / Dashboard printing)')"
+  if have curl && api_up; then
+    local dev; dev="$(api_get /devices/ 2>/dev/null || true)"
+    echo "server:          answering, $(json_num count <<<"$dev" || echo '?') known device(s)$(api_get /user/ 2>/dev/null | json_str username | sed 's/^./, logged in as &/')"
+  fi
   [ "$ok" = 1 ]
+}
+
+cmd_printers() {
+  have curl || die "curl is not installed"
+  api_up || die "PreFormServer is not answering on $API_BASE (is it running?)"
+  local printers=("$@")
+  [ "${#printers[@]}" -gt 0 ] || mapfile -t printers < <(configured_printers)
+  [ "${#printers[@]}" -gt 0 ] && probe_printers "${printers[@]}"
+  api_get /devices/
+  echo
+}
+
+cmd_login() {
+  have curl || die "curl is not installed"
+  api_up || die "PreFormServer is not answering on $API_BASE (is it running?)"
+  account_configured || die "no account configured: set FORMLABS_USERNAME and FORMLABS_PASSWORD (or FORMLABS_ACCESS_TOKEN)"
+  account_login || exit 1
+  api_get /user/
+  echo
 }
 
 cmd_uninstall() {
@@ -358,9 +497,11 @@ case "$cmd" in
   install)   cmd_install "$@" ;;
   run)       cmd_run "$@" ;;
   doctor)    cmd_doctor ;;
+  printers)  cmd_printers "$@" ;;
+  login)     cmd_login ;;
   wine)      launch_env; with_display "$WINE" "$@" ;;
   uninstall) cmd_uninstall ;;
   version|--version) echo "$PREFORM_LINUX_VERSION" ;;
-  ""|help|-h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+  ""|help|-h|--help) sed -n '2,/^set -euo/{/^set -euo/!p;}' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $cmd (try: preform-linux help)" ;;
 esac
