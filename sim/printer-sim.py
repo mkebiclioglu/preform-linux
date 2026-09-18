@@ -66,39 +66,31 @@ def frame(obj, attachment=b""):
 # and CompatibilityCheckerImpl.cpp requires the printer's object to contain
 # "PF_printing" and/or "PF_updating" objects.
 def compat(args):
+    """The printer's "version" object. PreForm's own descriptor (embedded in the binary) is
+       {"PF_printing": {"compatible": 1, "formule": {"compatible": [4]}, "flx": {"compatible": 6},
+                        "build": {"num": [21, "dev"]}}, "PF_updating": {"compatible": 1},
+        "PF_log_download": {"formule": {"logDownload": {"compatible": 1}}}}
+    CompatibilityCheckerImpl.cpp wants PF_printing and/or PF_updating objects; the device's
+    firmware_version comes from the top-level firmware_version; build.num is compared with
+    PreForm's own build number (isFirmwareBuildNumLowerThanPreform)."""
     c = args.compat
-    if c == "mirror":
-        return {"PF_printing": {"compatible": 1, "formule": {"compatible": [4]}, "flx": {"compatible": 6},
-                                "build": {"num": [21, "dev"]}},
-                "PF_updating": {"compatible": 1},
-                "PF_log_download": {"formule": {"logDownload": {"compatible": 1}}}}
-    if c == "wide":
-        return {"PF_printing": {"compatible": [1, 2, 3, 4, 5, 6], "formule": {"compatible": [1, 2, 3, 4, 5, 6]},
-                                "flx": {"compatible": [1, 2, 3, 4, 5, 6, 7, 8]}, "build": {"num": [21, "dev"]}},
-                "PF_updating": {"compatible": [1, 2, 3]},
-                "PF_log_download": {"formule": {"logDownload": {"compatible": [1, 2]}}}}
-    if c == "big":   # everything newer than PreForm itself, in case the job needs a floor
-        return {"PF_printing": {"compatible": [1, 2, 3, 4, 5, 6, 7, 8], "formule": {"compatible": [1, 2, 3, 4, 5, 6, 7, 8]},
-                                "flx": {"compatible": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]}, "build": {"num": [99, 9, 9]}},
-                "PF_updating": {"compatible": [1, 2, 3, 4]},
-                "PF_log_download": {"formule": {"logDownload": {"compatible": [1, 2, 3]}}}}
-    if c in ("topfields", "both"):
-        # The Dashboard-side parser in the binary reads build.num / build.name, flx.compatible,
-        # formule.compatible, firmware_version, firmware_build_number, layer_compatibility_number
-        # and formule_compatibility_number next to each other; offer them at the top level too.
-        pf = {"compatible": 1, "formule": {"compatible": [4]}, "flx": {"compatible": 6},
-              "build": {"num": [int(x) for x in args.firmware.split(".") if x.isdigit()] if c == "both" else [21, "dev"], "name": args.firmware}}
-        return {"PF_printing": pf, "PF_updating": {"compatible": 1},
-                "PF_log_download": {"formule": {"logDownload": {"compatible": 1}}},
-                "build": {"num": [int(x) for x in args.firmware.split(".") if x.isdigit()], "name": args.firmware}, "compatible": 1,
-                "flx": {"compatible": args.layer_compat}, "formule": {"compatible": [4]},
-                "firmware_version": args.firmware, "firmware_build_number": 1234,
-                "layer_compatibility_number": args.layer_compat, "formule_compatibility_number": 4}
-    if c == "minimal":
-        return {"PF_printing": {"compatible": 1}, "PF_updating": {"compatible": 1}}
+    nums = [int(x) for x in args.firmware.split(".") if x.isdigit()]
+    build = {"num": [args.build_num] + (["release"] if c == "tagged" else []), "name": args.firmware}
+    formule = [1, 2, 3, 4, 5, 6, 7, 8] if c in ("lists", "tagged") else [4]
+    flx = list(range(1, 13)) if c in ("lists", "tagged") else (6 if c == "mirror" else [6])
     if c == "empty":
         return {}
-    return {}
+    if c == "minimal":
+        return {"PF_printing": {"compatible": 1}, "PF_updating": {"compatible": 1}}
+    pf = {"compatible": [1, 2, 3, 4] if c in ("lists", "tagged") else 1, "formule": {"compatible": formule},
+          "flx": {"compatible": flx}, "build": build}
+    out = {"PF_printing": pf, "PF_updating": {"compatible": [1, 2, 3] if c in ("lists", "tagged") else 1},
+           "PF_log_download": {"formule": {"logDownload": {"compatible": 1}}}}
+    if c != "mirror":
+        out.update({"build": build, "compatible": 1, "flx": {"compatible": flx}, "formule": {"compatible": formule},
+                    "firmware_version": args.firmware, "firmware_build_number": args.build_num,
+                    "layer_compatibility_number": args.layer_compat, "formule_compatibility_number": 8 if c in ("lists", "tagged") else 4})
+    return out
 
 def information(args):
     return {
@@ -150,7 +142,7 @@ def status(args):
             "highLevelState": "HIGH_LEVEL_STATE__PRINTER_IDLE",
             "bedTemperature_C": 25.0, "primedTimeout_UnixStamp": 0.0, "currentlyRunningJobHeights": [], "isAcceptingJobs": True,
             # FuseGetStatusResponse_v3.cpp
-            "printerState": "USER_STATE_IDLE", "estimatedPreprintTime_ms": 0.0, "estimatedPostprintTime_ms": 0.0,
+            "printerState": args.state, "estimatedPreprintTime_ms": 0.0, "estimatedPostprintTime_ms": 0.0,
             "totalPrintTimeRemaining_ms": 0.0, "totalPreprintTimeRemaining_ms": 0.0, "totalPostprintTimeRemaining_ms": 0.0,
             "currentBedTemperature_C": 25.0, "cylinderInfo": cyl, "printerPowderLevel_L": 10.0,
         }
@@ -222,7 +214,9 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--bind", default="0.0.0.0")
     p.add_argument("--port", type=int, default=35)
-    p.add_argument("--compat", default="both", choices=["mirror", "wide", "big", "topfields", "both", "minimal", "empty"])
+    p.add_argument("--compat", default="lists", choices=["mirror", "both", "lists", "tagged", "minimal", "empty"])
+    p.add_argument("--build-num", type=int, default=99999, help="firmware build number (must not be lower than PreForm's own)")
+    p.add_argument("--state", default="USER_STATE_IDLE", help="printerState for SLS identities, e.g. USER_STATE_PRIMED")
     p.add_argument("--firmware", default="2.5.0", help="firmware version PreFormServer will show for the printer")
     p.add_argument("--layer-compat", type=int, default=6, help="layer (flx) compatibility number")
     p.add_argument("--powder-level", default="FULL")
