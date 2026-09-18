@@ -82,7 +82,11 @@ jobs:
       - name: Install PreFormServer (Authenticode-checked) and the shim
         run: bin/preform-linux install
       - run: bin/preform-linux doctor
+      - name: Wine sanity check inside the prefix
+        run: bin/preform-linux wine cmd /c "echo hello from wine && ver"
       - name: Run PreFormServer in the background
+        env:
+          WINEDEBUG: "-all,+err,+loaddll"
         run: |
           nohup bin/preform-linux run >preform.log 2>&1 &
           echo $! >preform.pid
@@ -97,7 +101,7 @@ jobs:
         run: SMOKE_LOCAL_DIR="$HOME/jobs" SMOKE_REMOTE_DIR="Z:$HOME/jobs" examples/smoke.sh
       - name: Logs
         if: always()
-        run: tail -n 200 preform.log
+        run: grep -v "loaddll" preform.log | tail -n 200; grep -c loaddll preform.log || true; grep loaddll preform.log | grep -iv "builtin" | tail -n 40
       - name: Stop
         if: always()
         run: kill -TERM "$(cat preform.pid)" 2>/dev/null; sleep 5; wineserver -k 2>/dev/null || true
