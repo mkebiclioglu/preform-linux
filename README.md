@@ -46,15 +46,21 @@ Want a self-contained private image with PreFormServer baked in?
 
 ## Quick start (bare metal)
 
-Needs Wine, Xvfb, curl, unzip and osslsigncode. Wine **11.13 or newer** runs
-PreFormServer as is; anything older (Ubuntu 24.04 ships 9.0, WineHQ stable is
-11.0) also needs `gcc-mingw-w64-x86-64` so the installer can build a tiny
-`dnsapi.dll` shim.
+Needs Wine **11.5 or newer**, Xvfb, curl, unzip and osslsigncode. Distro Wine
+will not do: PreFormServer 3.63.0's Qt imports the Windows ICU libraries, which
+Wine only gained in 11.5 (March 2026), and Ubuntu 24.04 ships 9.0. Install
+[WineHQ devel](https://wiki.winehq.org/Ubuntu) (11.13 or newer runs it as is;
+11.5 to 11.12 also need `gcc-mingw-w64-x86-64` so the installer can build a
+tiny `dnsapi.dll` shim).
 
 ```bash
-# Ubuntu 24.04 with distro Wine 9.0 (shim path)
-sudo apt install wine wine64 xvfb osslsigncode gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev make
-# or WineHQ devel >= 11.13 (no shim): https://wiki.winehq.org/Ubuntu
+# Ubuntu 24.04: WineHQ devel + the rest
+sudo dpkg --add-architecture i386
+sudo mkdir -pm755 /etc/apt/keyrings
+sudo curl -fsSL https://dl.winehq.org/wine-builds/winehq.key -o /etc/apt/keyrings/winehq-archive.key
+sudo curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources -o /etc/apt/sources.list.d/winehq-noble.sources
+sudo apt update && sudo apt install --install-recommends winehq-devel
+sudo apt install xvfb osslsigncode
 
 git clone https://github.com/mkebiclioglu/preform-linux.git ~/preform-linux
 ~/preform-linux/bin/preform-linux install    # download, verify, install, init the Wine prefix
@@ -84,6 +90,12 @@ paths when it talks to preform-linux is the obvious next step.
   even without a window, so `run` starts a private Xvfb. Rendering goes through
   the Mesa software renderer that Formlabs bundles (`opengl32sw.dll`) via
   `QT_OPENGL=software`; no GPU or GLX is required.
+- **Wine 11.5+.** Qt6Core in PreFormServer 3.63.0 imports `icuuc.dll`, the ICU
+  build Windows 10 ships in System32. Wine added `icu`, `icuuc` and `icuin`
+  in 11.5; on anything older the loader stops with `STATUS_DLL_NOT_FOUND`
+  before a single line of PreFormServer runs. `install` and `run` refuse older
+  Wine with a clear message (`PREFORM_WINE_UNCHECKED=1` overrides, for older
+  PreFormServer releases whose Qt did not use ICU).
 - **The dnsapi problem.** Right after opening its HTTP port PreFormServer calls
   `DnsStartMulticastQuery` (Windows mDNS) to look for printers. Wine aborts a
   process on the first call to a function it does not export, and no Wine
@@ -112,6 +124,7 @@ paths when it talks to preform-linux is the obvious next step.
 | `PREFORM_INSTALL_UNVERIFIED` | `0` | `1` accepts a download whose signature cannot be checked (osslsigncode missing). |
 | `PREFORM_SHIM` | auto | `1` always installs the dnsapi shim, `0` never. Auto: only when Wine < 11.13. |
 | `PREFORM_SHIM_DLL` | unset | Prebuilt shim to use instead of compiling (the Docker image sets this). |
+| `PREFORM_WINE_UNCHECKED` | `0` | `1` skips the Wine >= 11.5 check. |
 | `PREFORM_XVFB` | auto | `1` always starts Xvfb; `0` uses `$DISPLAY`. Auto: Xvfb when no DISPLAY. |
 | `QT_OPENGL` | `software` | Qt renderer. `desktop` uses Wine's OpenGL (needs GLX). |
 | `WINEPREFIX`, `WINEDEBUG`, `WINEDLLOVERRIDES` | prefix under home, `-all`, `mscoree=d;mshtml=d` | Passed to Wine. |
@@ -152,8 +165,9 @@ docker build -f docker/Dockerfile -t preform-linux:dev .
 
 CI (`.github/workflows/ci.yml`) lints, builds the shim, builds the image with
 WineHQ devel and runs `examples/smoke.sh` against it, and repeats the smoke test
-on a bare Ubuntu 24.04 runner with distro Wine 9.0 plus the shim. It runs weekly
-so new PreFormServer or Wine releases show up as red rather than as surprises.
+on a bare Ubuntu 24.04 runner with WineHQ devel and the dnsapi shim forced on,
+so the shim path stays tested. It runs weekly so new PreFormServer or Wine
+releases show up as red rather than as surprises.
 
 ## Roadmap
 

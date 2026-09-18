@@ -68,16 +68,22 @@ jobs:
       - name: Clean stop
         run: docker stop -t 20 preform && docker rm preform
 
-  bare-metal-wine9:
-    name: Bare metal, Ubuntu Wine 9.0 + shim
+  bare-metal-shim:
+    name: Bare metal, WineHQ devel + forced dnsapi shim
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      PREFORM_SHIM: "1" # exercise the shim path even though this Wine does not need it
     steps:
       - uses: actions/checkout@v5
-      - name: Install distro Wine, mingw-w64, Xvfb, osslsigncode
+      - name: Install WineHQ devel, mingw-w64, Xvfb, osslsigncode
         run: |
+          sudo dpkg --add-architecture i386
+          sudo mkdir -pm755 /etc/apt/keyrings
+          sudo curl -fsSL https://dl.winehq.org/wine-builds/winehq.key -o /etc/apt/keyrings/winehq-archive.key
+          sudo curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources -o /etc/apt/sources.list.d/winehq-noble.sources
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine wine64 gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev binutils-mingw-w64-x86-64 make xvfb xauth osslsigncode libgl1-mesa-dri
+          sudo apt-get install -y --no-install-recommends winehq-devel gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev binutils-mingw-w64-x86-64 make xvfb xauth osslsigncode libgl1-mesa-dri
           wine --version
       - run: bin/preform-linux doctor || true
       - name: Install PreFormServer (Authenticode-checked) and the shim

@@ -14,6 +14,7 @@
 #   PREFORM_TELEMETRY         1 allows PreFormServer telemetry (default: off)
 #   PREFORM_INSTALL_UNVERIFIED 1 accepts a download whose Authenticode signature cannot be checked
 #   PREFORM_SHIM              0 never installs the dnsapi shim, 1 always does (default: only when Wine < 11.13)
+#   PREFORM_WINE_UNCHECKED    1 skips the Wine >= 11.5 requirement check
 #   PREFORM_XVFB              0 uses the existing $DISPLAY, 1 always starts Xvfb (default: Xvfb when no DISPLAY)
 #   QT_OPENGL                 Qt renderer, default "software" (PreFormServer's bundled Mesa; no GPU needed)
 #   WINEDEBUG                 Wine log channels (default: -all)
@@ -26,6 +27,8 @@ PREFORM_VERSION="${PREFORM_VERSION:-latest}"
 DOWNLOAD_PAGE="https://formlabs.com/support/Formlabs-API-downloads-and-release-notes"
 # Only this layout on this host is accepted, whatever the downloads page says.
 RELEASE_URL_RE='^https://downloads\.formlabs\.com/PreFormServer/Release/[0-9]+\.[0-9]+\.[0-9]+/PreForm_Server_win_[A-Za-z0-9._-]+\.zip$'
+# Wine 11.5 added icu/icuuc/icuin, which PreFormServer 3.63.0's Qt6Core imports; older Wine cannot load it.
+WINE_MIN="11.5"
 # Wine gained DnsStartMulticastQuery/DnsStopMulticastQuery in 11.13 (commits c13fd5de90, 11bca8ddea).
 WINE_MIN_FOR_NO_SHIM="11.13"
 MS_ROOT_FINGERPRINT="53:67:F2:0C:7A:DE:0E:2B:CA:79:09:15:05:6D:08:6B:72:0C:33:C1:FA:2A:26:61:AC:F7:87:E3:29:2E:12:70"
@@ -59,6 +62,14 @@ wine_version() {
   have_wine || return 1
   "$WINE" --version 2>/dev/null | sed -n 's/^wine-\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p'
 }
+
+check_wine_version() {
+  local v
+  v="$(wine_version)"
+  [ -n "$v" ] || die "could not parse the output of $WINE --version"
+  version_ge "$v" "$WINE_MIN" || die "Wine $v is too old: PreFormServer needs the ICU DLLs Wine added in $WINE_MIN (WineHQ devel or staging; distro packages such as Ubuntu's 9.0 will not do). Set PREFORM_WINE_UNCHECKED=1 to try anyway."
+}
+[ "${PREFORM_WINE_UNCHECKED:-0}" = "1" ] && check_wine_version() { :; }
 
 needs_shim() {
   case "${PREFORM_SHIM:-}" in
@@ -171,6 +182,7 @@ cmd_install() {
   for a in "$@"; do case "$a" in --force) force=1 ;; *) die "unknown option $a" ;; esac; done
   for t in curl unzip; do have "$t" || die "$t is not installed"; done
   have_wine || die "wine is not installed (or set WINE to the binary)"
+  check_wine_version
 
   local url version
   url="$(latest_release_url)"
@@ -220,6 +232,7 @@ launch_env() {
 cmd_run() {
   [ "${1:-}" = "--" ] && shift
   [ -f "$EXE" ] || die "PreFormServer is not installed; run: preform-linux install"
+  check_wine_version
   [ -f "$WINEPREFIX/system.reg" ] || init_prefix
   launch_env
 
@@ -271,6 +284,7 @@ cmd_doctor() {
   echo "prefix:          $WINEPREFIX $([ -f "$WINEPREFIX/system.reg" ] && echo '(initialised)' || echo '(not initialised)')"
   if v="$(wine_version)" && [ -n "$v" ]; then
     echo "wine:            $("$WINE" --version) at $(command -v "$WINE")"
+    if ! version_ge "$v" "$WINE_MIN"; then echo "                 TOO OLD: PreFormServer needs Wine >= $WINE_MIN (ICU DLLs). Install WineHQ devel."; ok=0; fi
     if version_ge "$v" "$WINE_MIN_FOR_NO_SHIM"; then echo "dnsapi:          Wine >= $WINE_MIN_FOR_NO_SHIM implements DnsStartMulticastQuery; no shim needed"
     else echo "dnsapi:          Wine < $WINE_MIN_FOR_NO_SHIM; the shim is required $(have x86_64-w64-mingw32-gcc && echo '(mingw-w64 found)' || echo '(install gcc-mingw-w64-x86-64 or upgrade Wine)')"; fi
   else echo "wine:            MISSING"; ok=0; fi
