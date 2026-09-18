@@ -114,7 +114,11 @@ api DELETE "/scene/$sid/" >/dev/null 2>&1 || true
 # answers arrive) and a directed probe of an address nothing answers on (TEST-NET-2;
 # PreFormServer parks its built-in virtual printers on TEST-NET-1, 192.0.2.x).
 if d="$(op /discover-devices/ '{"timeout_seconds":2}')"; then pass "discover-devices (broadcast): $(json "d.get('count', 0)" <<<"$d") found"; else fail "discover-devices (broadcast)"; fi
-if d="$(op /discover-devices/ '{"ip_address":"198.51.100.1","timeout_seconds":3}')"; then pass "discover-devices at 198.51.100.1: $(json "d.get('count', 0)" <<<"$d") found (expected 0)"; else fail "discover-devices at 198.51.100.1"; fi
+# A host that never answers on port 35 makes the operation FAIL with "Couldn't find
+# printer, timeout occurred"; that, or an empty result, is the expected outcome here.
+if d="$(op /discover-devices/ '{"ip_address":"198.51.100.1","timeout_seconds":3}' 2>&1)"; then pass "discover-devices at 198.51.100.1: $(json "d.get('count', 0)" <<<"$d") found (expected 0)"
+elif grep -q "Couldn't find printer" <<<"$d"; then pass "discover-devices at 198.51.100.1: no printer there (expected)"
+else fail "discover-devices at 198.51.100.1: $d"; fi
 if d="$(api GET /devices/)"; then pass "devices: $(json "d.get('count', len(d.get('devices', [])))" <<<"$d") known"; else fail "devices"; fi
 echo "[smoke] $failures failure(s)"
 [ "$failures" = 0 ]

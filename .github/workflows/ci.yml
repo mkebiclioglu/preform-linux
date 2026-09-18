@@ -68,8 +68,8 @@ jobs:
         run: SMOKE_LOCAL_DIR="$PWD/jobs" examples/smoke.sh
       - name: Configured printers were probed at start (PREFORM_PRINTERS)
         run: |
-          for i in $(seq 1 30); do docker logs preform 2>&1 | grep -q 'no printer answered at 198.51.100.1' && break; sleep 2; done
-          docker logs preform 2>&1 | grep -E 'ready at|probing|printer answered' || { echo "no probe log lines"; exit 1; }
+          for i in $(seq 1 30); do docker logs preform 2>&1 | grep -qE 'no printer answered at 198.51.100.1|probe of 198.51.100.1 failed' && break; sleep 2; done
+          docker logs preform 2>&1 | grep -E 'ready at|probing|printer answered|probe of .* failed' || { echo "no probe log lines"; exit 1; }
       - name: printers and doctor subcommands against the running server
         run: |
           docker exec -e PREFORM_PRINTERS_TIMEOUT=3 preform preform-linux printers 198.51.100.1
