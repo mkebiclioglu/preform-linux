@@ -86,13 +86,10 @@ jobs:
             sudo ip addr add "$ip/32" dev lo
             sudo nohup python3 sim/printer-sim.py --bind "$ip" --compat "$c" --serial "SimForm4-$c" >"sim-$c.log" 2>&1 &
           done
-          # SLS identities: firmware version string formats
-          i=0
-          for fw in rc-1.13.5-1234 rc-9.9.9-99999 1.9.0-2444 rc-1.9.0-2444 release-1.13.5-1234; do
-            i=$((i+1)); tag=$(echo "$fw" | tr -c 'A-Za-z0-9\n' '_')
-            sudo ip addr add "$NET.3$i/32" dev lo
-            sudo nohup python3 sim/printer-sim.py --bind "$NET.3$i" --machine FS30-1-0 --product "Fuse 1+" --material FLP12B01 --firmware "$fw" --build-num 99999 --layer-compat 6 --compat lists --serial "SimFuse-$tag" >"sim-fuse-$tag.log" 2>&1 &
-          done
+          # SLS identities reporting the firmware capability names found in the binary
+          sudo ip addr add "$NET.31/32" dev lo; sudo nohup python3 sim/printer-sim.py --bind "$NET.31" --machine FS30-1-0 --product "Fuse 1+" --material FLP12B01 --serial SimFuse1Plus >sim-fuse1plus.log 2>&1 &
+          sudo ip addr add "$NET.32/32" dev lo; sudo nohup python3 sim/printer-sim.py --bind "$NET.32" --machine PILK-1-0 --product "Fuse 1" --material FLP12B01 --serial SimFuse1 >sim-fuse1.log 2>&1 &
+          sudo ip addr add "$NET.33/32" dev lo; sudo nohup python3 sim/printer-sim.py --bind "$NET.33" --machine FUSX-1-0 --product "Fuse X1" --material FLP12G01 --serial SimFuseX1 >sim-fusex1.log 2>&1 &
           sleep 1; sudo ss -ltnp | grep -c ':35 '
       - name: Run PreFormServer in the background
         run: |
@@ -109,7 +106,7 @@ jobs:
         run: |
           B=http://127.0.0.1:44388
           before=$(wc -l <preform.log)
-          for ip in "$NET.21" "$NET.31" "$NET.32" "$NET.33" "$NET.34" "$NET.35"; do
+          for ip in "$NET.21" "$NET.31" "$NET.32" "$NET.33"; do
             echo "=== $ip"
             PREFORM_PRINTERS_TIMEOUT=15 bin/preform-linux printers "$ip" 2>&1 | grep -v '^{' || true
           done
@@ -151,11 +148,15 @@ jobs:
           f1=$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"machine_type":"FS30-1-0","material_code":"FLP12B01","layer_thickness_mm":0.11}' $B/scene/ | j 'd["id"]')
           op "/scene/$f1/import-model/" "{\"file\":\"Z:$PWD/cube.stl\"}" >/dev/null
           op "/scene/$f1/auto-pack/" '{}' >/dev/null
-          for fw in rc-1.13.5-1234 rc-9.9.9-99999 1.9.0-2444 rc-1.9.0-2444 release-1.13.5-1234; do
-            id="SimFuse-$(echo "$fw" | tr -c 'A-Za-z0-9\n' '_')"
-            echo "--- $id: $(curl -sS "$B/devices/$id/" | python3 -c 'import json,sys; d=json.load(sys.stdin); print({k: d.get(k) for k in ("firmware_version","status","ready_to_print_now")})')"
-            echo "--- print to $id"; op "/scene/$f1/print/" "{\"printer\":\"$id\",\"job_name\":\"sim-fuse\"}"
-          done
+          echo "--- print Fuse 1+ scene to SimFuse1Plus"; op "/scene/$f1/print/" '{"printer":"SimFuse1Plus","job_name":"sim-fuse1plus"}'
+          echo "=== Fuse 1 scene (PILK-1-0) to SimFuse1"
+          p1=$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"machine_type":"PILK-1-0","material_code":"FLP12B01","layer_thickness_mm":0.11}' $B/scene/ | j 'd["id"]')
+          op "/scene/$p1/import-model/" "{\"file\":\"Z:$PWD/cube.stl\"}" >/dev/null; op "/scene/$p1/auto-pack/" '{}' >/dev/null
+          op "/scene/$p1/print/" '{"printer":"SimFuse1","job_name":"sim-fuse1"}'
+          echo "=== Fuse X1 scene (FUSX-1-0) to SimFuseX1"
+          fx=$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"machine_type":"FUSX-1-0","material_code":"FLP12G01","layer_thickness_mm":0.11}' $B/scene/ | j 'd["id"]')
+          op "/scene/$fx/import-model/" "{\"file\":\"Z:$PWD/cube.stl\"}" >/dev/null
+          op "/scene/$fx/print/" '{"printer":"SimFuseX1","job_name":"sim-fusex1"}'
           echo "=== what the PreFormServer log said about capabilities"; grep -i -E 'capabilit|firmware' preform.log | grep -v QObject | tail -20
       - name: What the fake printers received and sent
         if: always()

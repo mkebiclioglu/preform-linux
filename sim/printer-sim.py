@@ -92,6 +92,13 @@ def compat(args):
                     "layer_compatibility_number": args.layer_compat, "formule_compatibility_number": 8 if c in ("lists", "tagged") else 4})
     return out
 
+# Firmware capability names PreFormServer 3.63.0's Fuse code parses from the GET_INFORMATION
+# "capabilities" array (PrinterCapabilities::fromStrings, next to the print settings'
+# required-capability check that otherwise answers "incompatible firmware version").
+KNOWN_CAPABILITIES = ("AutomaticPrintOnUpload", "CombinedBuildCoreHeaters", "CreateNotification",
+                      "FailureDetectionUnitRefactor", "OpenMaterialLicense", "PIDLoopSeverity",
+                      "PhotoTimelapseSupported")
+
 def information(args):
     return {
         "connectionInterface": "PROTOCOL_INTERFACE_ETHERNET",
@@ -104,7 +111,7 @@ def information(args):
             "FactoryMACAddress": args.mac,
         },
         "ipAddresses": [args.bind],
-        "capabilities": json.loads(args.capabilities),
+        "capabilities": json.loads(args.capabilities) if args.capabilities else (list(KNOWN_CAPABILITIES) if is_sls(args) else []),
     }
 
 def is_sls(args):
@@ -220,7 +227,7 @@ def main():
     p.add_argument("--firmware", default="2.5.0", help="firmware version PreFormServer will show for the printer")
     p.add_argument("--layer-compat", type=int, default=6, help="layer (flx) compatibility number")
     p.add_argument("--powder-level", default="FULL")
-    p.add_argument("--capabilities", default="[]", help='JSON array reported as the printer\'s firmware capabilities')
+    p.add_argument("--capabilities", default=None, help="JSON array reported as the printer's firmware capabilities (default: every name PreFormServer 3.63.0 knows, for SLS identities)")
     p.add_argument("--product", default="Form 4")
     p.add_argument("--machine", default="FORM-4-0")
     p.add_argument("--material", default="FLGPBK05")
