@@ -101,6 +101,13 @@ if op "/scene/$sid/save-screenshot/" "{\"file\":\"$REMOTE_DIR/cube.png\",\"image
 elif [ "$ALLOW_SCREENSHOT_FAIL" = 1 ]; then echo "[WARN] save-screenshot failed (rendering under Wine/Xvfb); allowed"
 else fail "save-screenshot"; fi
 
+# PreFormServer ships one built-in virtual printer per model ("Form 4", "Fuse 1+", ...;
+# connection_type VIRTUAL). Printing to one runs the whole job upload path without
+# hardware, so this is the closest thing to a print test a CI runner can do.
+if r="$(op "/scene/$sid/print/" '{"printer":"Form 4","job_name":"smoke"}')"; then
+  pass "print to the virtual Form 4: job $(json "d.get('job_id','')" <<<"$r")"
+else fail "print to the virtual Form 4"; fi
+
 api DELETE "/scene/$sid/" >/dev/null 2>&1 || true
 
 # Printer discovery must at least fail cleanly under Wine: a broadcast scan (no mDNS
