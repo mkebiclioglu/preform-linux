@@ -84,7 +84,7 @@ jobs:
           sudo curl -fsSL https://dl.winehq.org/wine-builds/winehq.key -o /etc/apt/keyrings/winehq-archive.key
           sudo curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources -o /etc/apt/sources.list.d/winehq-noble.sources
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends winehq-devel gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev binutils-mingw-w64-x86-64 make xvfb xauth osslsigncode libgl1-mesa-dri
+          sudo apt-get install -y --no-install-recommends winehq-devel gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev binutils-mingw-w64-x86-64 make xvfb xauth osslsigncode libgl1-mesa-dri libegl1
           wine --version
       - run: bin/preform-linux doctor || true
       - name: Install PreFormServer (Authenticode-checked) and the shim
@@ -94,7 +94,8 @@ jobs:
         run: bin/preform-linux wine cmd /c "echo hello from wine && ver"
       - name: Run PreFormServer in the background
         env:
-          WINEDEBUG: "-all,err+all,+loaddll"
+          WINEDEBUG: "-all,err+all"
+          PREFORM_STARTUP_TIMEOUT: "400"
         run: |
           nohup bin/preform-linux run >preform.log 2>&1 &
           echo $! >preform.pid
@@ -109,7 +110,7 @@ jobs:
         run: SMOKE_LOCAL_DIR="$HOME/jobs" SMOKE_REMOTE_DIR="Z:$HOME/jobs" examples/smoke.sh
       - name: Logs
         if: always()
-        run: grep -v "loaddll" preform.log | tail -n 200; grep -c loaddll preform.log || true; grep loaddll preform.log | grep -iv "builtin" | tail -n 40
+        run: tail -n 200 preform.log
       - name: Stop
         if: always()
         run: kill -TERM "$(cat preform.pid)" 2>/dev/null; sleep 5; wineserver -k 2>/dev/null || true

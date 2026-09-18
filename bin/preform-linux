@@ -16,6 +16,7 @@
 #   PREFORM_SHIM              0 never installs the dnsapi shim, 1 always does (default: only when Wine < 11.13)
 #   PREFORM_WINE_UNCHECKED    1 skips the Wine >= 11.5 requirement check
 #   PREFORM_XVFB              0 uses the existing $DISPLAY, 1 always starts Xvfb (default: Xvfb when no DISPLAY)
+#   PREFORM_STARTUP_TIMEOUT   seconds to wait for "READY FOR INPUT" before giving up (default: 300; 0 disables)
 #   QT_OPENGL                 Qt renderer, default "software" (PreFormServer's bundled Mesa; no GPU needed)
 #   WINEDEBUG                 Wine log channels (default: -all)
 set -euo pipefail
@@ -24,6 +25,8 @@ PREFORM_LINUX_VERSION="0.1.0"
 PREFORM_LINUX_HOME="${PREFORM_LINUX_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/preform-linux}"
 PREFORM_PORT="${PREFORM_PORT:-44388}"
 PREFORM_VERSION="${PREFORM_VERSION:-latest}"
+PREFORM_STARTUP_TIMEOUT="${PREFORM_STARTUP_TIMEOUT:-300}"
+READY_TOKEN="READY FOR INPUT"
 DOWNLOAD_PAGE="https://formlabs.com/support/Formlabs-API-downloads-and-release-notes"
 # Only this layout on this host is accepted, whatever the downloads page says.
 RELEASE_URL_RE='^https://downloads\.formlabs\.com/PreFormServer/Release/[0-9]+\.[0-9]+\.[0-9]+/PreForm_Server_win_[A-Za-z0-9._-]+\.zip$'
@@ -235,6 +238,15 @@ launch_env() {
   return 0
 }
 
+# Pass PreFormServer's output through and mark the flag file once it reports ready.
+relay_output() {
+  local flag="$1" line
+  while IFS= read -r line; do
+    printf '%s\n' "$line"
+    if [[ "$line" == *"$READY_TOKEN"* ]]; then touch "$flag"; fi
+  done
+}
+
 cmd_run() {
   [ "${1:-}" = "--" ] && shift
   [ -f "$EXE" ] || die "PreFormServer is not installed; run: preform-linux install"
@@ -256,25 +268,46 @@ cmd_run() {
     rm -f "$display_file"
   fi
 
-  local wine_pid=""
+  local wine_pid="" watchdog_pid="" ready_flag
+  ready_flag="$(mktemp)"
+  rm -f "$ready_flag"
   # shellcheck disable=SC2329  # invoked through the traps below
   cleanup() {
     trap - TERM INT EXIT
+    [ -n "$watchdog_pid" ] && kill "$watchdog_pid" 2>/dev/null
     if [ -n "$wine_pid" ] && kill -0 "$wine_pid" 2>/dev/null; then
       kill -TERM "$wine_pid" 2>/dev/null || true
       for _ in $(seq 1 50); do kill -0 "$wine_pid" 2>/dev/null || break; sleep 0.2; done
       kill -KILL "$wine_pid" 2>/dev/null || true
     fi
     wineserver -k 2>/dev/null || true
-    [ -n "$xvfb_pid" ] && kill "$xvfb_pid" 2>/dev/null || true
+    [ -n "$xvfb_pid" ] && kill "$xvfb_pid" 2>/dev/null
+    rm -f "$ready_flag"
+    return 0
   }
   trap 'cleanup; exit 143' TERM INT
   trap cleanup EXIT
 
   disable_winedbg
   log "starting PreFormServer $(installed_version) on port $PREFORM_PORT (Wine $(wine_version), DISPLAY=$DISPLAY, QT_OPENGL=$QT_OPENGL${PREFORM_TELEMETRY:+, telemetry on})"
-  (cd "$INSTALL_DIR" && exec "$WINE" "$EXE" --port "$PREFORM_PORT" "$@") &
+  # PreFormServer's output passes through a reader that notices the ready line.
+  (cd "$INSTALL_DIR" && exec "$WINE" "$EXE" --port "$PREFORM_PORT" "$@") > >(relay_output "$ready_flag") 2>&1 &
   wine_pid=$!
+  if [ "$PREFORM_STARTUP_TIMEOUT" -gt 0 ] 2>/dev/null; then
+    # A PreFormServer that never says READY (crash dialog, stuck loader) is killed so a
+    # supervisor (systemd, Docker) can restart it instead of waiting forever.
+    (
+      sleep "$PREFORM_STARTUP_TIMEOUT"
+      if [ ! -e "$ready_flag" ] && kill -0 "$wine_pid" 2>/dev/null; then
+        log "PreFormServer did not report '$READY_TOKEN' within ${PREFORM_STARTUP_TIMEOUT}s; stopping it"
+        kill -TERM "$wine_pid" 2>/dev/null
+        sleep 5
+        kill -KILL "$wine_pid" 2>/dev/null
+        wineserver -k 2>/dev/null
+      fi
+    ) &
+    watchdog_pid=$!
+  fi
   set +e
   wait "$wine_pid"
   local status=$?
@@ -298,6 +331,10 @@ cmd_doctor() {
   for t in Xvfb xvfb-run curl unzip osslsigncode openssl; do
     if have "$t"; then echo "$(printf '%-16s' "$t:") $(command -v "$t")"; else echo "$(printf '%-16s' "$t:") missing"; [ "$t" = osslsigncode ] || [ "$t" = openssl ] || ok=0; fi
   done
+  if [ -f "$WINEPREFIX/system.reg" ]; then
+    if grep -A8 'AeDebug\]' "$WINEPREFIX/system.reg" 2>/dev/null | grep -q '"Auto"=dword:00000000'; then echo "winedbg:         auto-attach disabled (crashes exit)"
+    else echo "winedbg:         auto-attach still enabled; run/install will disable it"; fi
+  fi
   if [ -f "$EXE" ]; then
     echo "PreFormServer:   $(installed_version) at $INSTALL_DIR$([ -f "$INSTALL_DIR/dnsapi.dll" ] && echo ' (dnsapi shim installed)')"
   else echo "PreFormServer:   not installed (run: preform-linux install)"; ok=0; fi

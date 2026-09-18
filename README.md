@@ -104,8 +104,10 @@ paths when it talks to preform-linux is the obvious next step.
   release before 11.13 exported this one, so PreFormServer died at
   "starting HTTP server". Wine 11.13 (July 2026, commits `c13fd5de90` and
   `11bca8ddea`) added it as a stub that reports success. For older Wine,
-  `shim/dnsapi.c` is a 60-line DLL that does the same and is loaded with
-  `WINEDLLOVERRIDES=dnsapi=n`; the installer builds it only when needed.
+  `shim/dnsapi.c` is a small DLL that does the same (plus the handful of
+  dnsapi entry points Qt and Wine's own iphlpapi, ws2_32 and netapi32 expect)
+  and is loaded with `WINEDLLOVERRIDES=dnsapi=n`; the installer builds it only
+  when needed.
   Either way no mDNS answers ever arrive, so LAN printers are not discovered.
   Printing through a Formlabs account (Dashboard / Fleet Control) is plain
   HTTPS and should be unaffected, but is untested here.
@@ -127,6 +129,7 @@ paths when it talks to preform-linux is the obvious next step.
 | `PREFORM_SHIM` | auto | `1` always installs the dnsapi shim, `0` never. Auto: only when Wine < 11.13. |
 | `PREFORM_SHIM_DLL` | unset | Prebuilt shim to use instead of compiling (the Docker image sets this). |
 | `PREFORM_WINE_UNCHECKED` | `0` | `1` skips the Wine >= 11.5 check. |
+| `PREFORM_STARTUP_TIMEOUT` | `300` | Seconds to wait for `READY FOR INPUT`; PreFormServer is stopped if it never gets there. `0` disables. |
 | `PREFORM_XVFB` | auto | `1` always starts Xvfb; `0` uses `$DISPLAY`. Auto: Xvfb when no DISPLAY. |
 | `QT_OPENGL` | `software` | Qt renderer. `desktop` uses Wine's OpenGL (needs GLX). |
 | `WINEPREFIX`, `WINEDEBUG`, `WINEDLLOVERRIDES` | prefix under home, `-all`, `mscoree=d;mshtml=d` | Passed to Wine. |
