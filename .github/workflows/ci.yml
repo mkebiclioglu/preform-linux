@@ -43,7 +43,8 @@ jobs:
       - name: Start PreFormServer (downloads it from Formlabs on first start)
         run: |
           mkdir -p "$PWD/jobs"
-          docker run -d --name preform -p 127.0.0.1:44388:44388 -v "$PWD/jobs:/jobs" -e WINEDEBUG=-all,err+all preform-linux:ci
+          docker run -d --name preform -p 127.0.0.1:44388:44388 -v "$PWD/jobs:/jobs" \
+            -e PUID="$(id -u)" -e PGID="$(id -g)" -e WINEDEBUG=-all,err+all preform-linux:ci
       - name: Wait until the API answers
         run: |
           for i in $(seq 1 120); do

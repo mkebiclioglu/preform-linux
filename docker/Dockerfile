@@ -4,6 +4,7 @@
 # The image contains no Formlabs software. PreFormServer is downloaded from
 # downloads.formlabs.com and signature-checked on first start (into the /data
 # volume), or at build time with --build-arg BUNDLE=1 for a private image.
+# Runs as user "preform"; set PUID/PGID so files in /jobs are owned by you.
 
 FROM ubuntu:24.04 AS shim
 RUN apt-get update \
@@ -20,7 +21,7 @@ RUN dpkg --add-architecture i386 \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl unzip xvfb xauth osslsigncode openssl \
-      libgl1 libglx-mesa0 libgl1-mesa-dri fonts-dejavu-core tini procps iproute2 \
+      libgl1 libegl1 libglx-mesa0 libgl1-mesa-dri fonts-dejavu-core tini procps iproute2 util-linux \
  && mkdir -pm755 /etc/apt/keyrings \
  && curl -fsSL https://dl.winehq.org/wine-builds/winehq.key -o /etc/apt/keyrings/winehq-archive.key \
  && curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources -o /etc/apt/sources.list.d/winehq-noble.sources \
@@ -51,9 +52,11 @@ ARG PREFORM_VERSION=latest
 ENV PREFORM_VERSION=$PREFORM_VERSION
 ARG BUNDLE=0
 
-USER preform
 WORKDIR /jobs
+USER preform
 RUN if [ "$BUNDLE" = "1" ]; then preform-linux install; fi
+# Back to root: the entrypoint aligns uid/gid with PUID/PGID, fixes ownership and drops privileges.
+USER root
 
 VOLUME ["/data", "/jobs"]
 EXPOSE 44388

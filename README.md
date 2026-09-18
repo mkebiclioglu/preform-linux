@@ -34,7 +34,9 @@ curl -X POST http://127.0.0.1:44388/scene/ -H 'Content-Type: application/json' \
   -d '{"machine_type":"FORM-4-0","material_code":"FLGPBK05","layer_thickness_mm":0.1}'
 ```
 
-Files are passed to the API as PreFormServer sees them: the `./jobs` directory
+The container runs PreFormServer as an unprivileged user; set `PUID`/`PGID`
+(`PUID=$(id -u) PGID=$(id -g) docker compose up`) so the files it writes to
+`./jobs` belong to you. Files are passed to the API as PreFormServer sees them: the `./jobs` directory
 is mounted at `/jobs` in the container, which Wine exposes as **`Z:/jobs`**.
 So `{"file":"Z:/jobs/bracket.stl"}` imports it and `{"file":"Z:/jobs/bracket.form"}`
 saves the job back next to it. `examples/smoke.sh` is a complete
@@ -130,7 +132,9 @@ paths when it talks to preform-linux is the obvious next step.
 | `WINEPREFIX`, `WINEDEBUG`, `WINEDLLOVERRIDES` | prefix under home, `-all`, `mscoree=d;mshtml=d` | Passed to Wine. |
 
 Docker build arguments: `WINE_BRANCH` (`devel`), `WINE_VERSION`
-(`11.17~noble-1`), `PREFORM_VERSION` (`latest`), `BUNDLE` (`0`).
+(`11.17~noble-1`), `PREFORM_VERSION` (`latest`), `BUNDLE` (`0`). Container
+environment: `PUID`/`PGID` (`1000`) own `/data` and `/jobs`; the variables above
+are passed through.
 
 ## Security
 
