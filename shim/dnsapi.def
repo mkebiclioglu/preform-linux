@@ -1,0 +1,8 @@
+LIBRARY dnsapi.dll
+EXPORTS
+    DnsExtractRecordsFromMessage_W
+    DnsFree
+    DnsQueryEx
+    DnsStartMulticastQuery
+    DnsStopMulticastQuery
+    DnsWriteQuestionToBuffer_W

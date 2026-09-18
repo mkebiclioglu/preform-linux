@@ -1,0 +1,5 @@
+shim/dnsapi.dll
+jobs/
+*.form
+*.log
+.DS_Store

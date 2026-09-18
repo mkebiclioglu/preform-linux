@@ -1,0 +1,18 @@
+# User unit for a bare-metal install. Install with:
+#   mkdir -p ~/.config/systemd/user && cp systemd/preform-server.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now preform-server
+# Adjust ExecStart to where you cloned preform-linux.
+[Unit]
+Description=Formlabs PreFormServer (Wine)
+After=network.target
+
+[Service]
+ExecStart=%h/preform-linux/bin/preform-linux run
+Environment=PREFORM_PORT=44388
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

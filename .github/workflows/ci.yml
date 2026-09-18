@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 5 * * 1" # weekly: catches new PreFormServer and Wine releases
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
+      - run: shellcheck -x bin/preform-linux docker/entrypoint.sh docker/healthcheck.sh examples/smoke.sh
+      - run: bash -n bin/preform-linux && bin/preform-linux help >/dev/null
+
+  shim:
+    name: dnsapi shim (mingw-w64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 make
+      - run: make -C shim dnsapi.dll check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dnsapi-shim
+          path: shim/dnsapi.dll
+
+  docker:
+    name: Docker image (WineHQ devel, no shim)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build image
+        run: docker build -f docker/Dockerfile -t preform-linux:ci .
+      - name: Start PreFormServer (downloads it from Formlabs on first start)
+        run: |
+          mkdir -p "$PWD/jobs"
+          docker run -d --name preform -p 127.0.0.1:44388:44388 -v "$PWD/jobs:/jobs" preform-linux:ci
+      - name: Wait until the API answers
+        run: |
+          for i in $(seq 1 120); do
+            code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://127.0.0.1:44388/ || true)
+            if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then echo "up after ${i}x5s (HTTP $code)"; exit 0; fi
+            if [ "$(docker inspect -f '{{.State.Running}}' preform)" != "true" ]; then echo "container exited"; docker logs preform; exit 1; fi
+            sleep 5
+          done
+          echo "timed out"; docker logs preform; exit 1
+      - name: Smoke test through the API
+        env:
+          PREFORM_URL: http://127.0.0.1:44388
+          SMOKE_REMOTE_DIR: Z:/jobs
+        run: SMOKE_LOCAL_DIR="$PWD/jobs" examples/smoke.sh
+      - name: Doctor
+        if: always()
+        run: docker exec preform preform-linux doctor || true
+      - name: Container logs
+        if: always()
+        run: docker logs preform 2>&1 | tail -n 200
+      - name: Clean stop
+        run: docker stop -t 20 preform && docker rm preform
+
+  bare-metal-wine9:
+    name: Bare metal, Ubuntu Wine 9.0 + shim
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install distro Wine, mingw-w64, Xvfb, osslsigncode
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine64 gcc-mingw-w64-x86-64 make xvfb xauth osslsigncode libgl1-mesa-dri
+          wine --version
+      - run: bin/preform-linux doctor || true
+      - name: Install PreFormServer (Authenticode-checked) and the shim
+        run: bin/preform-linux install
+      - run: bin/preform-linux doctor
+      - name: Run PreFormServer in the background
+        run: |
+          nohup bin/preform-linux run >preform.log 2>&1 &
+          echo $! >preform.pid
+          for i in $(seq 1 120); do
+            code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://127.0.0.1:44388/ || true)
+            if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then echo "up after ${i}x5s (HTTP $code)"; exit 0; fi
+            kill -0 "$(cat preform.pid)" 2>/dev/null || { echo "exited"; cat preform.log; exit 1; }
+            sleep 5
+          done
+          echo "timed out"; cat preform.log; exit 1
+      - name: Smoke test through the API
+        run: SMOKE_LOCAL_DIR="$HOME/jobs" SMOKE_REMOTE_DIR="Z:$HOME/jobs" examples/smoke.sh
+      - name: Logs
+        if: always()
+        run: tail -n 200 preform.log
+      - name: Stop
+        if: always()
+        run: kill -TERM "$(cat preform.pid)" 2>/dev/null; sleep 5; wineserver -k 2>/dev/null || true

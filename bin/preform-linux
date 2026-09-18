@@ -1,0 +1,295 @@
+#!/usr/bin/env bash
+# preform-linux: run Formlabs PreFormServer (the headless PreForm API) on Linux under Wine.
+#
+#   preform-linux install [--force]   download, verify and install PreFormServer, set up the Wine prefix
+#   preform-linux run [-- args]       start PreFormServer in the foreground (Xvfb + Wine)
+#   preform-linux doctor              report what is installed and what is missing
+#   preform-linux wine <args>         run a Wine command inside the preform-linux prefix
+#   preform-linux uninstall           remove the install directory and Wine prefix
+#
+# Environment:
+#   PREFORM_LINUX_HOME        install root (default: $XDG_DATA_HOME/preform-linux)
+#   PREFORM_PORT              HTTP port PreFormServer listens on (default: 44388)
+#   PREFORM_VERSION           "latest" (default) or an exact release such as 3.63.0
+#   PREFORM_TELEMETRY         1 allows PreFormServer telemetry (default: off)
+#   PREFORM_INSTALL_UNVERIFIED 1 accepts a download whose Authenticode signature cannot be checked
+#   PREFORM_SHIM              0 never installs the dnsapi shim, 1 always does (default: only when Wine < 11.13)
+#   PREFORM_XVFB              0 uses the existing $DISPLAY, 1 always starts Xvfb (default: Xvfb when no DISPLAY)
+#   QT_OPENGL                 Qt renderer, default "software" (PreFormServer's bundled Mesa; no GPU needed)
+#   WINEDEBUG                 Wine log channels (default: -all)
+set -euo pipefail
+
+PREFORM_LINUX_VERSION="0.1.0"
+PREFORM_LINUX_HOME="${PREFORM_LINUX_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/preform-linux}"
+PREFORM_PORT="${PREFORM_PORT:-44388}"
+PREFORM_VERSION="${PREFORM_VERSION:-latest}"
+DOWNLOAD_PAGE="https://formlabs.com/support/Formlabs-API-downloads-and-release-notes"
+# Only this layout on this host is accepted, whatever the downloads page says.
+RELEASE_URL_RE='^https://downloads\.formlabs\.com/PreFormServer/Release/[0-9]+\.[0-9]+\.[0-9]+/PreForm_Server_win_[A-Za-z0-9._-]+\.zip$'
+# Wine gained DnsStartMulticastQuery/DnsStopMulticastQuery in 11.13 (commits c13fd5de90, 11bca8ddea).
+WINE_MIN_FOR_NO_SHIM="11.13"
+MS_ROOT_FINGERPRINT="53:67:F2:0C:7A:DE:0E:2B:CA:79:09:15:05:6D:08:6B:72:0C:33:C1:FA:2A:26:61:AC:F7:87:E3:29:2E:12:70"
+
+INSTALL_DIR="$PREFORM_LINUX_HOME/PreFormServer"
+EXE="$INSTALL_DIR/PreFormServer.exe"
+META="$PREFORM_LINUX_HOME/installed.env"
+export WINEPREFIX="${WINEPREFIX:-$PREFORM_LINUX_HOME/prefix}"
+export WINEDEBUG="${WINEDEBUG:--all}"
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-mscoree=d;mshtml=d}"
+
+self_dir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+repo_dir="$(cd "$self_dir/.." && pwd)"
+CERT="$repo_dir/certs/microsoft-identity-verification-root-2020.pem"
+SHIM_SRC="$repo_dir/shim"
+
+log()  { printf '[preform-linux] %s\n' "$*" >&2; }
+die()  { log "error: $*"; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+version_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]; }
+
+wine_version() {
+  have wine || return 1
+  wine --version 2>/dev/null | sed -n 's/^wine-\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p'
+}
+
+needs_shim() {
+  case "${PREFORM_SHIM:-}" in
+    0) return 1 ;;
+    1) return 0 ;;
+  esac
+  local v
+  v="$(wine_version)" || return 0
+  ! version_ge "$v" "$WINE_MIN_FOR_NO_SHIM"
+}
+
+installed_version() { [ -f "$META" ] && sed -n 's/^version=//p' "$META" || true; }
+
+# --- release discovery -------------------------------------------------------
+
+latest_release_url() {
+  local html
+  html="$(curl -fsSL --max-time 30 -A "preform-linux/$PREFORM_LINUX_VERSION" "$DOWNLOAD_PAGE")" || die "could not read $DOWNLOAD_PAGE"
+  printf '%s' "$html" \
+    | grep -oE 'https://downloads\.formlabs\.com/PreFormServer/Release/[0-9.]+/PreForm_Server_win_[A-Za-z0-9._-]+\.zip' \
+    | sort -u \
+    | awk -F/ '{ print $6 " " $0 }' \
+    | sort -k1,1V \
+    | { if [ "$PREFORM_VERSION" = "latest" ]; then tail -n1; else awk -v v="$PREFORM_VERSION" '$1 == v' | tail -n1; fi; } \
+    | awk '{ print $2 }'
+}
+
+# --- verification --------------------------------------------------------------
+
+check_pinned_root() {
+  [ -f "$CERT" ] || die "missing trust anchor $CERT"
+  have openssl || return 0
+  local fp
+  fp="$(openssl x509 -in "$CERT" -noout -fingerprint -sha256 | sed 's/^.*=//')"
+  [ "${fp^^}" = "$MS_ROOT_FINGERPRINT" ] || die "trust anchor fingerprint mismatch: $fp"
+}
+
+# True when some "Subject:" line carries both CN=Formlabs Inc. and O=Formlabs Inc.
+# (osslsigncode prints "CN=..., O=..." or OpenSSL's legacy "/C=US/.../CN=..." form).
+subjects_name_formlabs() {
+  sed -n 's/^.*Subject: *//p' <<<"$1" | while IFS= read -r subj; do
+    if grep -qE '(^|[,/] *)CN=Formlabs Inc\.( *[,/]|$)' <<<"$subj" && grep -qE '(^|[,/] *)O=Formlabs Inc\.( *[,/]|$)' <<<"$subj"; then
+      echo yes
+    fi
+  done | grep -q yes
+}
+
+verify_authenticode() {
+  local exe="$1" out
+  if ! have osslsigncode; then
+    [ "${PREFORM_INSTALL_UNVERIFIED:-0}" = "1" ] && { log "WARNING: osslsigncode not installed; accepting the download on HTTPS alone (PREFORM_INSTALL_UNVERIFIED=1)"; return 0; }
+    die "osslsigncode is not installed, so the Formlabs code signature cannot be checked. Install it (apt/dnf install osslsigncode) or set PREFORM_INSTALL_UNVERIFIED=1."
+  fi
+  check_pinned_root
+  out="$(osslsigncode verify -in "$exe" -CAfile "$CERT" -TSA-CAfile "$CERT" 2>&1 || true)"
+  if grep -qE '^Signature verification: ok$' <<<"$out" \
+     && ! grep -qE '^(Timestamp Server )?Signature verification: failed$' <<<"$out" \
+     && subjects_name_formlabs "$out"; then
+    log "Authenticode signature OK: Formlabs Inc. (chain anchored on the pinned Microsoft root)"
+    return 0
+  fi
+  [ "${PREFORM_INSTALL_UNVERIFIED:-0}" = "1" ] && { log "WARNING: signature check failed but PREFORM_INSTALL_UNVERIFIED=1 is set; continuing"; return 0; }
+  printf '%s\n' "$out" | grep -iE 'verification|error|failed|subject' | tail -n 6 >&2
+  die "PreFormServer.exe failed the Authenticode check; refusing to install"
+}
+
+check_zip_entries() {
+  local entries
+  entries="$(unzip -Z1 "$1")"
+  grep -qx 'PreFormServer/PreFormServer.exe' <<<"$entries" || die "archive does not contain PreFormServer/PreFormServer.exe"
+  if grep -qE '(^/|^[A-Za-z]:|(^|/)\.\.(/|$)|\\)' <<<"$entries"; then die "archive contains unsafe paths; refusing to extract"; fi
+  if grep -vqE '^PreFormServer/' <<<"$entries"; then die "archive contains entries outside PreFormServer/; refusing to extract"; fi
+}
+
+# --- shim --------------------------------------------------------------------------
+
+build_shim() {
+  local out="$1"
+  if [ -n "${PREFORM_SHIM_DLL:-}" ] && [ -f "$PREFORM_SHIM_DLL" ]; then cp "$PREFORM_SHIM_DLL" "$out"; return 0; fi
+  have x86_64-w64-mingw32-gcc || die "Wine $(wine_version) needs the dnsapi shim (Wine < $WINE_MIN_FOR_NO_SHIM), which is built with x86_64-w64-mingw32-gcc. Install gcc-mingw-w64-x86-64, or point PREFORM_SHIM_DLL at a prebuilt shim/dnsapi.dll, or upgrade Wine and set PREFORM_SHIM=0."
+  make -s -C "$SHIM_SRC" >&2
+  cp "$SHIM_SRC/dnsapi.dll" "$out"
+}
+
+# --- prefix ----------------------------------------------------------------------
+
+with_display() {
+  # Run "$@" with a display: the caller's, or a throwaway Xvfb.
+  if [ -n "${DISPLAY:-}" ] && [ "${PREFORM_XVFB:-0}" != "1" ]; then "$@"; else
+    have xvfb-run || die "xvfb-run is not installed (apt install xvfb)"
+    xvfb-run -a -s "-screen 0 1280x1024x24 -nolisten tcp" "$@"
+  fi
+}
+
+init_prefix() {
+  mkdir -p "$WINEPREFIX"
+  log "initialising Wine prefix at $WINEPREFIX"
+  with_display wineboot --init >/dev/null 2>&1 || die "wineboot failed"
+  # Never auto-attach winedbg: a crashed PreFormServer must exit, not hang for a debugger.
+  wine reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\AeDebug' /v Auto /t REG_DWORD /d 0 /f >/dev/null 2>&1 || true
+  wineserver -w
+}
+
+# --- commands ------------------------------------------------------------------------
+
+cmd_install() {
+  local force=0
+  for a in "$@"; do case "$a" in --force) force=1 ;; *) die "unknown option $a" ;; esac; done
+  for t in curl unzip wine; do have "$t" || die "$t is not installed"; done
+
+  local url version
+  url="$(latest_release_url)"
+  [ -n "$url" ] || die "no Windows PreFormServer $PREFORM_VERSION release found on $DOWNLOAD_PAGE"
+  [[ "$url" =~ $RELEASE_URL_RE ]] || die "refusing unexpected download URL: $url"
+  version="$(printf '%s' "$url" | awk -F/ '{ print $6 }')"
+
+  if [ "$force" = 0 ] && [ "$(installed_version)" = "$version" ] && [ -f "$EXE" ]; then
+    log "PreFormServer $version is already installed at $INSTALL_DIR"
+  else
+    local tmp
+    mkdir -p "$PREFORM_LINUX_HOME"
+    tmp="$(mktemp -d "$PREFORM_LINUX_HOME/tmp.XXXXXX")"
+    trap 'rm -rf "$tmp"' EXIT
+    log "downloading PreFormServer $version (about 330 MB) from $url"
+    curl -fL --max-time 1800 --max-filesize 1073741824 --retry 3 -A "preform-linux/$PREFORM_LINUX_VERSION" -o "$tmp/preform.zip" "$url"
+    check_zip_entries "$tmp/preform.zip"
+    log "extracting (the 1.1 GB debug symbols are skipped)"
+    unzip -q "$tmp/preform.zip" -x '*.pdb' -d "$tmp/stage"
+    verify_authenticode "$tmp/stage/PreFormServer/PreFormServer.exe"
+    rm -rf "$INSTALL_DIR"
+    mv "$tmp/stage/PreFormServer" "$INSTALL_DIR"
+    printf 'version=%s\nurl=%s\ninstalled_at=%s\n' "$version" "$url" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$META"
+    log "installed PreFormServer $version to $INSTALL_DIR"
+  fi
+
+  if needs_shim; then
+    log "Wine $(wine_version) lacks DnsStartMulticastQuery; installing the dnsapi shim"
+    build_shim "$INSTALL_DIR/dnsapi.dll"
+  else
+    rm -f "$INSTALL_DIR/dnsapi.dll"
+  fi
+
+  [ -f "$WINEPREFIX/system.reg" ] || init_prefix
+  log "done. Next: preform-linux run"
+}
+
+launch_env() {
+  [ "${PREFORM_TELEMETRY:-0}" = "1" ] || export DISABLE_PREFORMSERVER_TELEMETRY=1
+  export QT_OPENGL="${QT_OPENGL:-software}"
+  [ -f "$INSTALL_DIR/dnsapi.dll" ] && export WINEDLLOVERRIDES="dnsapi=n;$WINEDLLOVERRIDES"
+  return 0
+}
+
+cmd_run() {
+  [ "${1:-}" = "--" ] && shift
+  [ -f "$EXE" ] || die "PreFormServer is not installed; run: preform-linux install"
+  [ -f "$WINEPREFIX/system.reg" ] || init_prefix
+  launch_env
+
+  local xvfb_pid="" display_file
+  if [ -z "${DISPLAY:-}" ] || [ "${PREFORM_XVFB:-0}" = "1" ]; then
+    have Xvfb || die "Xvfb is not installed (apt install xvfb)"
+    display_file="$(mktemp)"
+    Xvfb -displayfd 3 -screen 0 1280x1024x24 -nolisten tcp 3>"$display_file" >/dev/null 2>&1 &
+    xvfb_pid=$!
+    for _ in $(seq 1 100); do [ -s "$display_file" ] && break; sleep 0.1; done
+    [ -s "$display_file" ] || die "Xvfb did not start"
+    local display_no
+    display_no="$(tr -d '[:space:]' <"$display_file")"
+    export DISPLAY=":$display_no"
+    rm -f "$display_file"
+  fi
+
+  local wine_pid=""
+  # shellcheck disable=SC2329  # invoked through the traps below
+  cleanup() {
+    trap - TERM INT EXIT
+    if [ -n "$wine_pid" ] && kill -0 "$wine_pid" 2>/dev/null; then
+      kill -TERM "$wine_pid" 2>/dev/null || true
+      for _ in $(seq 1 50); do kill -0 "$wine_pid" 2>/dev/null || break; sleep 0.2; done
+      kill -KILL "$wine_pid" 2>/dev/null || true
+    fi
+    wineserver -k 2>/dev/null || true
+    [ -n "$xvfb_pid" ] && kill "$xvfb_pid" 2>/dev/null || true
+  }
+  trap 'cleanup; exit 143' TERM INT
+  trap cleanup EXIT
+
+  log "starting PreFormServer $(installed_version) on port $PREFORM_PORT (Wine $(wine_version), DISPLAY=$DISPLAY, QT_OPENGL=$QT_OPENGL${PREFORM_TELEMETRY:+, telemetry on})"
+  (cd "$INSTALL_DIR" && exec wine "$EXE" --port "$PREFORM_PORT" "$@") &
+  wine_pid=$!
+  set +e
+  wait "$wine_pid"
+  local status=$?
+  set -e
+  wine_pid=""
+  log "PreFormServer exited with status $status"
+  exit "$status"
+}
+
+cmd_doctor() {
+  local v ok=1
+  echo "preform-linux $PREFORM_LINUX_VERSION"
+  echo "home:            $PREFORM_LINUX_HOME"
+  echo "prefix:          $WINEPREFIX $([ -f "$WINEPREFIX/system.reg" ] && echo '(initialised)' || echo '(not initialised)')"
+  if v="$(wine_version)" && [ -n "$v" ]; then
+    echo "wine:            $(wine --version) at $(command -v wine)"
+    if version_ge "$v" "$WINE_MIN_FOR_NO_SHIM"; then echo "dnsapi:          Wine >= $WINE_MIN_FOR_NO_SHIM implements DnsStartMulticastQuery; no shim needed"
+    else echo "dnsapi:          Wine < $WINE_MIN_FOR_NO_SHIM; the shim is required $(have x86_64-w64-mingw32-gcc && echo '(mingw-w64 found)' || echo '(install gcc-mingw-w64-x86-64 or upgrade Wine)')"; fi
+  else echo "wine:            MISSING"; ok=0; fi
+  for t in Xvfb xvfb-run curl unzip osslsigncode openssl; do
+    if have "$t"; then echo "$(printf '%-16s' "$t:") $(command -v "$t")"; else echo "$(printf '%-16s' "$t:") missing"; [ "$t" = osslsigncode ] || [ "$t" = openssl ] || ok=0; fi
+  done
+  if [ -f "$EXE" ]; then
+    echo "PreFormServer:   $(installed_version) at $INSTALL_DIR$([ -f "$INSTALL_DIR/dnsapi.dll" ] && echo ' (dnsapi shim installed)')"
+  else echo "PreFormServer:   not installed (run: preform-linux install)"; ok=0; fi
+  if have curl; then
+    local latest; latest="$(PREFORM_VERSION=latest latest_release_url 2>/dev/null | awk -F/ '{ print $6 }')"
+    [ -n "$latest" ] && echo "latest release:  $latest"
+  fi
+  echo "port:            $PREFORM_PORT$(have ss && ss -ltn 2>/dev/null | grep -q ":$PREFORM_PORT " && echo ' (something is listening)')"
+  [ "$ok" = 1 ]
+}
+
+cmd_uninstall() {
+  log "removing $INSTALL_DIR and $WINEPREFIX"
+  wineserver -k 2>/dev/null || true
+  rm -rf "$INSTALL_DIR" "$WINEPREFIX" "$META"
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  install)   cmd_install "$@" ;;
+  run)       cmd_run "$@" ;;
+  doctor)    cmd_doctor ;;
+  wine)      launch_env; with_display wine "$@" ;;
+  uninstall) cmd_uninstall ;;
+  version|--version) echo "$PREFORM_LINUX_VERSION" ;;
+  ""|help|-h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command: $cmd (try: preform-linux help)" ;;
+esac

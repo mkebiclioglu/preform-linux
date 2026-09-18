@@ -1,0 +1,20 @@
+services:
+  preform:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: preform-linux:local
+    platform: linux/amd64
+    # PreFormServer has no authentication; keep the port on loopback.
+    ports:
+      - "127.0.0.1:44388:44388"
+    volumes:
+      - preform-data:/data   # PreFormServer install + Wine prefix (about 1.5 GB)
+      - ./jobs:/jobs         # models in, .form files out; PreFormServer sees this as Z:/jobs
+    environment:
+      PREFORM_VERSION: latest
+    restart: unless-stopped
+    stop_grace_period: 20s
+
+volumes:
+  preform-data:
