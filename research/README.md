@@ -69,7 +69,24 @@ and `Machine firmware doesn't support the following capabilities: %1`
 PreForm matches the printer's reported capability categories and revisions against
 the job's, and the category names are not string literals in the binary. A capture
 from a real Fuse (`tcpdump port 35` while PreForm probes it) would give them in one
-shot.
+shot. 
+
+Update, from disassembly of PreFormServer 3.63.0: the SLS printer's usable
+capabilities are not taken from the `capabilities` array a printer reports at all.
+`StricklandPrinterBase::_processGetInformationReply` reads only `version` (the
+`build`/`name` compatibility object) and, in a helper that takes the firmware
+version string, derives the capability set by comparing the parsed version against
+thresholds the process loads at runtime (the check at `+0x1b0`, backed by
+`PrinterCapabilities` built in `sub_141ad3880`). The job's required capabilities are
+then matched against that derived set (`Form4PrinterCapabilities.cpp`,
+`Incorrect MachineCapabilities for: %1`). So a print to a simulated SLS printer is
+gated on the printer reporting a real Formlabs firmware **version** that maps to the
+capabilities the Fuse job needs, not on any field the simulator can simply assert.
+That mapping is keyed to genuine firmware build numbers and is not a string literal
+in the binary, which is why fourteen rounds of synthetic identities never satisfied
+it. This is a firmware-authenticity gate, not a missing field; a capture of one real
+Fuse's `GET_INFORMATION` reply remains the way to get a value that passes, and it may
+not be worth chasing since no real automation setup prints to a fake SLS machine.
 
 ## How the schemas were read
 
