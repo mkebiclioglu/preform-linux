@@ -82,6 +82,18 @@ def compat(args):
                                 "flx": {"compatible": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]}, "build": {"num": [99, 9, 9]}},
                 "PF_updating": {"compatible": [1, 2, 3, 4]},
                 "PF_log_download": {"formule": {"logDownload": {"compatible": [1, 2, 3]}}}}
+    if c in ("topfields", "both"):
+        # The Dashboard-side parser in the binary reads build.num / build.name, flx.compatible,
+        # formule.compatible, firmware_version, firmware_build_number, layer_compatibility_number
+        # and formule_compatibility_number next to each other; offer them at the top level too.
+        pf = {"compatible": 1, "formule": {"compatible": [4]}, "flx": {"compatible": 6},
+              "build": {"num": [2, 5, 0] if c == "both" else [21, "dev"], "name": "2.5.0"}}
+        return {"PF_printing": pf, "PF_updating": {"compatible": 1},
+                "PF_log_download": {"formule": {"logDownload": {"compatible": 1}}},
+                "build": {"num": [2, 5, 0], "name": "2.5.0"}, "compatible": 1,
+                "flx": {"compatible": 6}, "formule": {"compatible": [4]},
+                "firmware_version": "2.5.0", "firmware_build_number": 1234,
+                "layer_compatibility_number": 6, "formule_compatibility_number": 4}
     if c == "minimal":
         return {"PF_printing": {"compatible": 1}, "PF_updating": {"compatible": 1}}
     if c == "empty":
@@ -190,7 +202,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--bind", default="0.0.0.0")
     p.add_argument("--port", type=int, default=35)
-    p.add_argument("--compat", default="mirror", choices=["mirror", "wide", "big", "minimal", "empty"])
+    p.add_argument("--compat", default="mirror", choices=["mirror", "wide", "big", "topfields", "both", "minimal", "empty"])
     p.add_argument("--product", default="Form 4")
     p.add_argument("--machine", default="FORM-4-0")
     p.add_argument("--material", default="FLGPBK05")
