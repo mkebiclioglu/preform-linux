@@ -78,15 +78,17 @@ jobs:
           sudo apt-get install -y --no-install-recommends winehq-devel gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev binutils-mingw-w64-x86-64 make xvfb xauth osslsigncode libgl1-mesa-dri libegl1
           wine --version
       - run: bin/preform-linux install
-      - name: Fake printers on loopback, one reply shape each
+      - name: Fake printers on loopback, one compatibility-object shape each
         run: |
-          sudo ip addr add "$NET.10/32" dev lo
-          sudo nohup python3 research/printer-sim.py --bind "$NET.10" --silent >sim-silent.log 2>&1 &
-          for v in 1 2 3 4 5 6 7 8 9; do
-            sudo ip addr add "$NET.2$v/32" dev lo
-            sudo nohup python3 research/printer-sim.py --bind "$NET.2$v" --variant "$v" >"sim-$v.log" 2>&1 &
+          i=0
+          for c in mirror wide minimal empty; do
+            i=$((i+1)); ip="$NET.2$i"
+            sudo ip addr add "$ip/32" dev lo
+            sudo nohup python3 research/printer-sim.py --bind "$ip" --compat "$c" --serial "SimForm4-$c" >"sim-$c.log" 2>&1 &
           done
-          sleep 1; sudo ss -ltnp | grep ':35 ' | wc -l
+          sudo ip addr add "$NET.30/32" dev lo
+          sudo nohup python3 research/printer-sim.py --bind "$NET.30" --compat mirror --machine FS30-1-0 --product "Fuse 1+" --material FLP12B01 --serial "SimFuse-mirror" >"sim-fuse.log" 2>&1 &
+          sleep 1; sudo ss -ltnp | grep -c ':35 '
       - name: Run PreFormServer in the background
         run: |
           nohup bin/preform-linux run >preform.log 2>&1 &
@@ -102,19 +104,46 @@ jobs:
         run: |
           B=http://127.0.0.1:44388
           before=$(wc -l <preform.log)
-          for ip in "$NET.21" "$NET.22" "$NET.23" "$NET.24" "$NET.25" "$NET.26" "$NET.27" "$NET.28" "$NET.29"; do
+          for ip in "$NET.21" "$NET.22" "$NET.23" "$NET.24" "$NET.30"; do
             echo "=== $ip"
-            PREFORM_PRINTERS_TIMEOUT=8 bin/preform-linux printers "$ip" 2>&1 | grep -v '^{' || true
-            curl -sS $B/devices/ | python3 -c '
+            PREFORM_PRINTERS_TIMEOUT=15 bin/preform-linux printers "$ip" 2>&1 | grep -v '^{' || true
+          done
+          echo "=== non-virtual devices now known"
+          curl -sS $B/devices/ | python3 -c '
           import json,sys
           for x in json.load(sys.stdin)["devices"]:
-              if x.get("connection_type") != "VIRTUAL": print("NON-VIRTUAL DEVICE:", json.dumps(x)[:600])'
-          done
+              if x.get("connection_type") != "VIRTUAL": print("NON-VIRTUAL DEVICE:", json.dumps(x)[:800])'
           echo "=== PreFormServer log lines since the probes started (minus HTTP chatter)"
           tail -n +"$before" preform.log | grep -v -E 'Received (GET|POST)|incoming connection|disconnected|QObject::connect' | head -80
+      - name: Print to a simulated printer if one was discovered
+        run: |
+          B=http://127.0.0.1:44388
+          j() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1"; }
+          op() { local acc id o; acc=$(curl -sS -X POST -H 'Content-Type: application/json' -d "$2" "$B$1?async=true"); id=$(j 'd.get("operationId","")' <<<"$acc")
+                 for i in $(seq 1 150); do o=$(curl -sS "$B/operations/$id/"); grep -qE '"status" *: *"(SUCCEEDED|FAILED)"' <<<"$o" && break; sleep 2; done; echo "$o" | head -c 800; echo; }
+          target=$(curl -sS $B/devices/ | python3 -c '
+          import json,sys
+          for x in json.load(sys.stdin)["devices"]:
+              if x.get("connection_type") != "VIRTUAL" and x.get("product_name","").startswith("Form"): print(x["id"]); break')
+          [ -n "$target" ] || { echo "no simulated SLA printer discovered; skipping"; exit 0; }
+          python3 - >cube.stl <<'PY'
+          s = 10
+          v = [(0,0,0),(s,0,0),(s,s,0),(0,s,0),(0,0,s),(s,0,s),(s,s,s),(0,s,s)]
+          tris = [(0,2,1),(0,3,2),(4,5,6),(4,6,7),(0,1,5),(0,5,4),(1,2,6),(1,6,5),(2,3,7),(2,7,6),(3,0,4),(3,4,7)]
+          print("solid cube")
+          for t in tris:
+              print(" facet normal 0 0 0\n  outer loop")
+              for i in t: print("   vertex %d %d %d" % v[i])
+              print("  endloop\n endfacet")
+          print("endsolid cube")
+          PY
+          sid=$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"machine_type":"FORM-4-0","material_code":"FLGPBK05","layer_thickness_mm":0.1}' $B/scene/ | j 'd["id"]')
+          op "/scene/$sid/import-model/" "{\"file\":\"Z:$PWD/cube.stl\"}" >/dev/null
+          op "/scene/$sid/auto-support/" '{}' >/dev/null
+          echo "--- print to simulated printer $target"; op "/scene/$sid/print/" "{\"printer\":\"$target\",\"job_name\":\"sim-job\"}"
       - name: What the fake printers received and sent
         if: always()
-        run: for f in sim-*.log; do echo "--- $f"; grep -v '\] sent' "$f" | head -12; done
+        run: for f in sim-*.log; do echo "--- $f"; cut -c1-400 "$f" | head -60; done
       - name: Print to the virtual Form 4 and the virtual Fuse 1+
         run: |
           python3 - >cube.stl <<'PY'
@@ -225,6 +254,33 @@ jobs:
           for x in json.load(sys.stdin)["devices"]:
               if x["id"]=="Fuse X1": print(json.dumps(x, indent=1))'
           curl -sS "$B/devices/Fuse%20X1/" | head -c 1500; echo
+      - name: Fuse X1 job preparation end to end (FUSX-1-0, FLP12G01, 0.11 mm)
+        run: |
+          B=http://127.0.0.1:44388
+          j() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1"; }
+          op() { local acc id o; acc=$(curl -sS -X POST -H 'Content-Type: application/json' -d "$2" "$B$1?async=true"); id=$(j 'd.get("operationId","")' <<<"$acc")
+                 for i in $(seq 1 150); do o=$(curl -sS "$B/operations/$id/"); grep -qE '"status" *: *"(SUCCEEDED|FAILED)"' <<<"$o" && break; sleep 2; done; echo "$o" | head -c 500; echo; }
+          python3 - >cube.stl <<'PY'
+          s = 10
+          v = [(0,0,0),(s,0,0),(s,s,0),(0,s,0),(0,0,s),(s,0,s),(s,s,s),(0,s,s)]
+          tris = [(0,2,1),(0,3,2),(4,5,6),(4,6,7),(0,1,5),(0,5,4),(1,2,6),(1,6,5),(2,3,7),(2,7,6),(3,0,4),(3,4,7)]
+          print("solid cube")
+          for t in tris:
+              print(" facet normal 0 0 0\n  outer loop")
+              for i in t: print("   vertex %d %d %d" % v[i])
+              print("  endloop\n endfacet")
+          print("endsolid cube")
+          PY
+          sid=$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"machine_type":"FUSX-1-0","material_code":"FLP12G01","layer_thickness_mm":0.11}' $B/scene/ | j 'd["id"]')
+          echo "scene $sid"
+          echo "--- import"; op "/scene/$sid/import-model/" "{\"file\":\"Z:$PWD/cube.stl\"}" | head -c 200; echo
+          echo "--- auto-pack"; op "/scene/$sid/auto-pack/" '{}' | head -c 300; echo
+          echo "--- estimate"; op "/scene/$sid/estimate-print-time/" '{}'
+          echo "--- validation"; curl -sS "$B/scene/$sid/print-validation/" | head -c 400; echo
+          echo "--- save-form"; op "/scene/$sid/save-form/" "{\"file\":\"Z:$PWD/fusex1.form\"}"; ls -la fusex1.form || true
+          echo "--- print to virtual Fuse X1"; op "/scene/$sid/print/" '{"printer":"Fuse X1","job_name":"fusex1"}'
+          echo "--- print to virtual Fuse X1 by ip"; op "/scene/$sid/print/" '{"printer":"192.0.2.12","job_name":"fusex1-ip"}'
+          echo "--- list-materials machine ids containing FUSX (expect none)"; curl -sS $B/list-materials/ | grep -o 'FUSX[^"]*' | sort -u || echo none
       - name: PreFormServer log
         if: always()
         run: grep -v -E 'Received (GET|POST)|incoming connection|disconnected' preform.log | tail -n 60
