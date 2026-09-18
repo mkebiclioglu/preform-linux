@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.0 (2026-09-18)
+
+- **Simulated printer.** `sim/printer-sim.py` is a fake Formlabs printer on TCP port
+  35 that PreFormServer discovers by IP, lists as a connected Form 4 / Fuse 1+ /
+  Fuse X1 with tank and cartridge, and prints to: calibration, job metadata, the
+  job file and every layer arrive at the simulator. `docker compose --profile sim
+  up` runs it as the `printer-sim` sidecar. The CI discovers it and prints to it on
+  every run, on the Docker image and on bare metal.
+- The reply schemas were read from PreFormServer's binary (`research/README.md`):
+  envelope `Id/ReplyToMethod/Version/Success/Parameters/Error`, `GetInformation_v1`,
+  the `GetStatus` family, and the print sequence `GET_CALIBRATION`, `START_JOB`,
+  `UPLOAD_FILE`, `UPLOAD_LAYER`.
+- **Fuse X1.** Documented what PreFormServer 3.63.0 can do for it (job prep with
+  `FUSX-1-0` / `FLP12G01` / 0.11 mm, estimate, `.form`, network print) and what it
+  cannot (not in `list-materials`, no other settings, no 3D packing, virtual
+  printer refuses jobs). `examples/smoke.sh` prints to the simulator when
+  `SMOKE_SIM_PRINTER` names it.
+
 ## 0.2.1 (2026-09-18)
 
 - The repository and the GHCR image are public.

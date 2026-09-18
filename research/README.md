@@ -1,73 +1,78 @@
-# Printer protocol research
+# Printer protocol notes
 
-What PreFormServer says to a printer over the network, learned by pointing it at
-fake printers in CI (`.github/workflows/research-printer-probe.yml`, run by hand).
-The goal is a simulated printer that PreFormServer discovers and prints to, so the
-network print path can be tested without hardware. That goal is **not reached yet**;
-this is what is known.
+How `sim/printer-sim.py` came to speak PreFormServer's printer protocol, kept so
+the next person can extend it (firmware update, formlogs, secure handshake) or
+re-derive it for a new PreFormServer release. Nothing here is Formlabs
+documentation; it was learned by watching PreFormServer 3.63.0 talk and by reading
+the strings and string references in its binary.
 
-## Verified
+## Transport and framing (captured)
 
-- **Transport.** A directed `POST /discover-devices/ {"ip_address": ...}` opens a
-  plain TCP connection to the address on **port 35** (Formlabs' documented printer
-  port) and retries every 15 s until the timeout. This works under Wine with the
-  dnsapi shim and with Wine's own dnsapi alike, so printers by IP are not blocked
-  by the mDNS gap. Nothing is sent to DNS ports; nothing uses TLS.
-- **Framing.** Little-endian `uint32` length, that many bytes of JSON, then a
-  little-endian `uint64` (0 in every probe; presumably the length of a binary
-  attachment that follows, which is how layers and files would be uploaded).
-- **The probe.** Pretty-printed JSON, one request per connection:
+- Directed discovery (`POST /discover-devices/ {"ip_address": ...}`) opens plain
+  TCP to the address on **port 35** (Formlabs' documented printer port), retrying
+  every 15 s until the timeout. Works under Wine with or without the dnsapi shim.
+  No DNS, no TLS.
+- Frame: little-endian `uint32` JSON length, the JSON, little-endian `uint64`
+  attachment length, the attachment. Requests: `{"Id": "{guid}", "Method":
+  "PROTOCOL_METHOD_...", "Version": 1, "Parameters": {...}?}`.
 
-  ```json
-  {"Id": "{guid}", "Method": "PROTOCOL_METHOD_GET_INFORMATION", "Version": 1}
-  ```
+## Reply envelope and packet schemas (read from the binary)
 
-- **Vocabulary** (strings in `PreFormServer.exe` 3.63.0). Methods:
-  `GET_INFORMATION`, `GET_STATUS`, `SECURE_HANDSHAKE`, `HEARTBEAT`, `START_JOB`,
-  `START_FORM`, `UPLOAD_FILE`, `UPLOAD_LAYER`, `RESUME_JOB`, `ABORT_JOB`,
-  `GET_CALIBRATION`, `GET_SCALE_CORRECTION`, `GET_SNAPSHOT`, `UPDATE`,
-  `START_IDLE_ROUTINE`, `ABORT_IDLE_ROUTINE`, `GENERATE_FORMLOGS`,
-  `GET_FORMLOGS_CHUNK`, `DELETE_FORMLOGS`, `REGISTER_USER_TO_DASHBOARD`,
-  `LOCAL_FORWARD` (all `PROTOCOL_METHOD_*`). Fields: `PROTOCOL_FIELD_ID`,
-  `_METHOD`, `_VERSION`, `_SUCCESS`, `_ERROR`, `_REPLY_TO_METHOD`; the literal
-  strings `Success`, `Error`, `ReplyToMethod`, `Signature`, `ProductName`,
-  `MachineTypeId` exist; error codes `PROTOCOL_ERROR_*` and `PROTOCOL_SUCCESS`;
-  interfaces `PROTOCOL_INTERFACE_{ETHERNET,WIFI,USB,NO_INTERFACE}`. Response
-  structs: `GetStatusResponse_v1/_v2`, `SecureHandshake_v1`,
-  `StartJobMetadata_v1/_v2`, `UploadFileMetadata_v1`, `UploadLayerMetadata_v1/_v2`
-  (namespace `FormuleProtocol`; the mDNS service is `_formlabs_formule._tcp`).
-  PreForm's own compatibility descriptor is
-  `{"PF_printing": {"formule": {"compatible": [4]}, "flx": {"compatible": 6}, ...}}`.
-- **Machine type ids in the binary** beyond what `list-materials` exposes:
-  `FUSX-1-0` (Fuse X1), `FUSL-2-0`, `SIFT-1-x`, `CLRK-1-x`, `CURL-1-x`,
-  `CHEW-1-0`, `WSHL-1-0`, `CELL-0-0`. PreFormServer 3.63.0 answers
-  `Scene type not supported` for a `FUSX-1-0` scene: Fuse X1 job preparation is
-  not in this Local API release, only the virtual device entry.
+`FormulePacketMetadata.cpp`: `Id` string, `ReplyToMethod` string, `Version` number,
+`Success` bool, `Parameters` object, `Error` string (optional). A known key with the
+wrong JSON type fails the whole packet silently (PreFormServer just closes and
+retries), which is why replies that merely guessed key names never worked.
 
-## Not yet known
+`GetInformation_v1.cpp` Parameters: `connectionInterface` string
+(`PROTOCOL_INTERFACE_ETHERNET|WIFI|USB|NO_INTERFACE`), `version` object (the
+compatibility descriptor; `CompatibilityCheckerImpl.cpp` wants `PF_printing` and/or
+`PF_updating` objects, and accepts an empty object), `printerID` string, `printer`
+object `{Serial, DeviceAlias, MachineTypeId, FactoryMACAddress?}`, `ipAddresses`
+array, `capabilities` array.
 
-The shape of an acceptable `GET_INFORMATION` reply. Sixteen shapes were tried
-(`printer-sim.py --variant N`): payload flat or nested under `Result`, `Response`,
-`Data`, `Payload`, `Information`, `Parameters`; with `Method` or `ReplyToMethod`;
-with `Success`/`Error` as booleans, empty, or `PROTOCOL_SUCCESS`; `Version` 1 or 4;
-with, without, or with a relocated trailer; and a superset of every plausible key
-spelling for serial, product, machine type, firmware, status and capabilities.
-PreFormServer closes the connection right after each reply, logs nothing, retries,
-and reports `Couldn't find printer, timeout occurred`. The next step would be a
-capture of a real printer's reply (one `tcpdump port 35` on a network with a
-printer, while PreForm probes it) rather than more guessing.
+`GetStatus.cpp` (shared) and the per-family `GetStatus_v*.cpp` files: see the
+`status()` function in the simulator, which sends the union with the right types.
+Enum values: `READY_TO_PRINT_{READY,NOT_READY,NEEDS_CONFIRMATION,NOT_SUPPORTED}`,
+`BUILD_PLATFORM_CONTENTS_{CONFIRMED_CLEAR,CONFIRMED_DIRTY,MISSING,POST_PRINT,
+UNCONFIRMED,NOT_SUPPORTED}`, `USER_STATE_{IDLE,PRINTING,...}`,
+`PUMP_STATE_{NOT_PRESENT,PRESENT,...}`, `CAMERA_STATE_{DISABLED,ENABLED,...}`,
+`FORMCELL_{UNKNOWN,IDLE,...}`.
 
-## What works without any of this
+What PreFormServer sends when printing, in order: `GET_CALIBRATION`
+(`{layerThickness_mm, materialCode}`), `START_JOB` (~50 metadata fields:
+`Guid`, `Name`, `MaterialCode`, `LayerCount`, `TotalPrintTimeEstimated_ms`,
+`AllowedMachineTypeIds`, `PrintSettings*`, `PreFormVersionNumber`, an
+`AllKnobsX` blob, ...), `UPLOAD_FILE` (`FileName` `misc.flfc`, attachment ~100 KB),
+then `UPLOAD_LAYER` with `Layer`, `BinaryLayerStartOffsets` and `FileExtensions`
+(`.flfc`) and the layers as the attachment, and `HEARTBEAT`.
 
-PreFormServer ships a built-in **virtual printer per model** (`GET /devices/`,
-`connection_type: VIRTUAL`, ids `Form 4`, `Form 3L`, `Fuse 1+`, `Fuse X1`, ...,
-parked on 192.0.2.x). `POST /scene/{id}/print/ {"printer": "Form 4"}` runs the
-whole job generation and upload path and returns a `job_id`; `examples/smoke.sh`
-and the CI do this on every run. The virtual SLS printers reject jobs
-(`Cannot print, the printer might have an incompatible firmware version`), so the
-dry run is SLA only.
+Other packets in the binary: `SecureHandshake_v1` (`DataBase64`, `NonceBase64`,
+`Length`, `Guid`), `ResumeJob_v1`, `AbortJob_v1`, `Update`, `GenerateFormlogs`/
+`GetFormlogsChunk`/`DeleteFormlogs`, `GetSnapshot`, `StartIdleRoutine`/
+`AbortIdleRoutine`, `GetScaleCorrection`, `LocalForward`,
+`RegisterUserToDashboard`.
 
-```bash
-python3 research/printer-sim.py --bind 198.51.100.21 --variant 2   # needs port 35: root or CAP_NET_BIND_SERVICE
-PREFORM_PRINTERS_TIMEOUT=8 preform-linux printers 198.51.100.21     # logs the probe it received
-```
+## How the schemas were read
+
+`strings` gives the vocabulary but MSVC pools string literals by suffix, so
+neighbours in the dump mean nothing. The useful trick: scan `.text` for
+RIP-relative `lea` instructions, map each to the string it points at, and group by
+code address. The parser helper pattern `<key> "is not " is<Type> "was"` then yields
+every key and its expected type, and the `X:\src\PreForm\vendor\FormuleProtocol\...`
+assertion paths label which packet each group belongs to. The scripts are small
+(~80 lines of Python each, no dependencies) and live in this directory's history;
+`.github/workflows/research-printer-probe.yml` is the harness that ran the rounds.
+
+## Fuse X1 in PreFormServer 3.63.0
+
+Same method, other question. The binary carries `FUSX-1-0` and exactly one Fuse X1
+print setting (`FLP12G01_110_FUSX-1_00.fps`: Nylon 12 GF at 0.11 mm), inside the
+Strickland (Fuse 1+ 30W) plugin. `POST /scene/` with that triple works and yields a
+330 x 330 x 565 mm build volume; `list-materials` does not mention the family;
+every other material or layer thickness answers `Scene type not supported` (the
+server's message for "no print setting for that combination", also given for
+made-up machine types); `auto-pack` answers `3D Packing is not supported for the
+given machine type: FUSX-1-0`; the virtual Fuse X1 (like every virtual SLS
+printer) answers `Cannot print, the printer might have an incompatible firmware
+version`. `FUSL-2-0` behaves like `FUSX-1-0` (a `PP_ENABLE_FUSE_2L` build flag
+exists in the source paths).

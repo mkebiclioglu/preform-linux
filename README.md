@@ -11,8 +11,8 @@ that imports models, orients and supports them, estimates print time, writes
 **Status: working.** The Docker image and a bare Ubuntu 24.04 install both pass
 an end-to-end check on every push and every week: import a model, orient,
 support, lay out, estimate print time, write the `.form` file, render a
-screenshot, send the job to PreFormServer's built-in virtual Form 4, probe for
-printers, all on a GPU-less runner. Printers are reached
+screenshot, discover a simulated printer by IP and print to it over the network,
+all on a GPU-less runner. Printers are reached
 by IP address or through a Formlabs account (see *Printers*); mDNS discovery
 and USB printers are the two things Wine does not give you.
 
@@ -121,15 +121,33 @@ an automation setup should prefer them:
    plus `--network host` for the container) is a well-defined job; contributions
    are welcome.
 
-**No printer yet?** PreFormServer ships a built-in virtual printer for every
-model (`GET /devices/` lists them with `connection_type: VIRTUAL`; ids `Form 4`,
-`Form 4L`, `Fuse 1+`, `Fuse X1`, ...). `POST /scene/{id}/print/` with
-`{"printer": "Form 4"}` runs the whole job generation and upload path and returns
-a `job_id`, so a pipeline can be rehearsed end to end before hardware arrives;
-`examples/smoke.sh` and the CI do this on every run. The virtual SLS printers
-refuse jobs in 3.63.0, so this dry run is SLA only. A simulated network printer
-that PreFormServer would discover and print to is being worked out in
-`research/`; the protocol framing and vocabulary are documented there.
+4. **A simulated printer.** `sim/printer-sim.py` is a fake printer on TCP port
+   35 that PreFormServer discovers by IP, lists as a connected Form 4 with tank
+   and cartridge, and prints to: job metadata, the job file and every layer arrive
+   at the simulator and are logged. (A simulated Fuse 1+ or Fuse X1 is discovered
+   and monitored, but SLS jobs are refused pending a firmware-version field that
+   is still being worked out.) `docker compose
+   --profile sim up` runs it as a sidecar named `printer-sim`; put that name in
+   `PREFORM_PRINTERS` and the pipeline can be rehearsed end to end, discovery and
+   upload included, before any hardware arrives. See `sim/README.md`. The CI
+   does exactly this on every run.
+
+PreFormServer also ships a built-in **virtual printer** per model (`GET
+/devices/`, `connection_type: VIRTUAL`, ids `Form 4`, `Fuse 1+`, `Fuse X1`, ...);
+`{"printer": "Form 4"}` in a print request runs job generation without any
+network. The virtual SLS printers refuse jobs in 3.63.0; the simulator does not.
+
+**Fuse X1.** PreFormServer 3.63.0 prepares Fuse X1 jobs (`machine_type`
+`FUSX-1-0`, material `FLP12G01`, `layer_thickness_mm` 0.11, the one print
+setting it ships for the printer): import, print-time estimate and `.form` export
+work, and a simulated Fuse X1 is discovered and monitored. What does not work in
+this release: `list-materials` leaves the family out, so clients that only trust
+that list never see the code (formlabs-local-mcp fills the gap); any other
+material or layer height answers `Scene type not supported`; `auto-pack` and
+`auto-layout` are refused for this machine type, so models stay where import
+puts them; and sending a job to any SLS printer that is not real hardware, the
+virtual ones or the simulator, is refused with an "incompatible firmware
+version" message. Expect Formlabs to fill those in as the printer ships.
 
 **USB printers** are out of reach: PreFormServer drives them through a bundled
 Windows `libusb-1.0.dll` and Wine has no USB passthrough. A winelib
@@ -266,8 +284,9 @@ docker build -f docker/Dockerfile -t preform-linux:dev .
 ```
 
 CI (`.github/workflows/ci.yml`) lints, builds the shim, builds the image with
-WineHQ devel and runs `examples/smoke.sh` against it (including a print to the
-virtual Form 4, printer probing and the `printers` subcommand), repeats the smoke test on a bare Ubuntu 24.04
+WineHQ devel and runs `examples/smoke.sh` against it (including discovery of and
+a print to the simulated printer, a print to the virtual Form 4, and the
+`printers` subcommand), repeats the smoke test on a bare Ubuntu 24.04
 runner with WineHQ devel and the dnsapi shim forced on with tracing, and
 publishes the image to GHCR when everything is green. It runs weekly so new
 PreFormServer or Wine releases show up as red rather than as surprises.
@@ -275,9 +294,6 @@ See `CHANGELOG.md` for what changed.
 
 ## Roadmap
 
-- A simulated network printer for testing the print path without hardware
-  (`research/`: the probe PreFormServer sends is captured; the reply it accepts
-  is not yet known).
 - Real mDNS in the shim (or upstream in Wine) for zero-config LAN discovery.
 - A winelib `libusb-1.0.dll` bridge for USB printers, if anyone needs one.
 - arm64 hosts (Raspberry Pi, Apple Silicon without Rosetta) via FEX/box64:

@@ -23,6 +23,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
       - run: shellcheck -S warning -x bin/preform-linux docker/entrypoint.sh docker/healthcheck.sh examples/smoke.sh
       - run: bash -n bin/preform-linux && bin/preform-linux help >/dev/null
+      - run: python3 -m py_compile sim/printer-sim.py && python3 sim/printer-sim.py --help >/dev/null
 
   shim:
     name: dnsapi shim (mingw-w64)
@@ -44,12 +45,17 @@ jobs:
       - uses: actions/checkout@v5
       - name: Build image
         run: docker build -f docker/Dockerfile -t preform-linux:ci .
+      - name: Simulated printer on the host (sim/printer-sim.py, port 35)
+        run: |
+          sudo nohup python3 sim/printer-sim.py --bind 0.0.0.0 --serial SimForm4 >sim.log 2>&1 &
+          sleep 1; sudo ss -ltnp | grep -q ':35 ' || { cat sim.log; exit 1; }
       - name: Start PreFormServer (downloads it from Formlabs on first start)
         run: |
           mkdir -p "$PWD/jobs"
           docker run -d --name preform -p 127.0.0.1:44388:44388 -v "$PWD/jobs:/jobs" \
+            --add-host=host.docker.internal:host-gateway \
             -e PUID="$(id -u)" -e PGID="$(id -g)" -e WINEDEBUG=-all,err+all \
-            -e PREFORM_PRINTERS=198.51.100.1 -e PREFORM_PRINTERS_TIMEOUT=3 -e PREFORM_PRINTERS_INTERVAL=0 \
+            -e PREFORM_PRINTERS=198.51.100.1,host.docker.internal -e PREFORM_PRINTERS_TIMEOUT=10 -e PREFORM_PRINTERS_INTERVAL=0 \
             preform-linux:ci
       - name: Wait until the API answers
         run: |
@@ -61,15 +67,21 @@ jobs:
             sleep 5
           done
           echo "timed out"; docker logs preform; exit 1
-      - name: Smoke test through the API
+      - name: Smoke test through the API (prints to the simulated printer too)
         env:
           PREFORM_URL: http://127.0.0.1:44388
           SMOKE_REMOTE_DIR: Z:/jobs
+          SMOKE_SIM_PRINTER: SimForm4
         run: SMOKE_LOCAL_DIR="$PWD/jobs" examples/smoke.sh
       - name: Configured printers were probed at start (PREFORM_PRINTERS)
         run: |
-          for i in $(seq 1 30); do docker logs preform 2>&1 | grep -qE 'no printer answered at 198.51.100.1|probe of 198.51.100.1 failed' && break; sleep 2; done
-          docker logs preform 2>&1 | grep -E 'ready at|probing|printer answered|probe of .* failed' || { echo "no probe log lines"; exit 1; }
+          for i in $(seq 1 30); do docker logs preform 2>&1 | grep -q 'printer at host.docker.internal' && break; sleep 2; done
+          docker logs preform 2>&1 | grep -E 'ready at|probing|printer answered|printer at|probe of .* failed' || { echo "no probe log lines"; exit 1; }
+          docker logs preform 2>&1 | grep -q 'printer at host.docker.internal: Form 4' || { echo "simulated printer not discovered at start"; exit 1; }
+      - name: The simulated printer received the job
+        run: |
+          grep -c 'PROTOCOL_METHOD_UPLOAD_LAYER' sim.log
+          grep -q 'PROTOCOL_METHOD_START_JOB' sim.log && grep -q 'PROTOCOL_METHOD_UPLOAD_LAYER' sim.log
       - name: printers and doctor subcommands against the running server
         run: |
           docker exec -e PREFORM_PRINTERS_TIMEOUT=3 preform preform-linux printers 198.51.100.1
@@ -107,10 +119,17 @@ jobs:
       - run: bin/preform-linux doctor
       - name: Wine sanity check inside the prefix
         run: bin/preform-linux wine cmd /c "echo hello from wine && ver"
+      - name: Simulated printer on a loopback alias
+        run: |
+          sudo ip addr add 198.51.100.21/32 dev lo
+          sudo nohup python3 sim/printer-sim.py --bind 198.51.100.21 --serial SimForm4 >sim.log 2>&1 &
+          sleep 1; sudo ss -ltnp | grep -q '198.51.100.21:35' || { cat sim.log; exit 1; }
       - name: Run PreFormServer in the background
         env:
           WINEDEBUG: "-all,err+all"
           PREFORM_STARTUP_TIMEOUT: "400"
+          PREFORM_PRINTERS: "198.51.100.21"
+          PREFORM_PRINTERS_INTERVAL: "0"
         run: |
           nohup bin/preform-linux run >preform.log 2>&1 &
           echo $! >preform.pid
@@ -121,10 +140,15 @@ jobs:
             sleep 5
           done
           echo "timed out"; cat preform.log; exit 1
-      - name: Smoke test through the API
-        run: SMOKE_LOCAL_DIR="$HOME/jobs" SMOKE_REMOTE_DIR="Z:$HOME/jobs" examples/smoke.sh
-      - name: printers subcommand (directed probe of an address nothing answers on)
-        run: PREFORM_PRINTERS_TIMEOUT=3 bin/preform-linux printers 198.51.100.1
+      - name: Smoke test through the API (prints to the simulated printer too)
+        run: SMOKE_SIM_PRINTER=SimForm4 SMOKE_LOCAL_DIR="$HOME/jobs" SMOKE_REMOTE_DIR="Z:$HOME/jobs" examples/smoke.sh
+      - name: printers subcommand (the simulated printer, and an address nothing answers on)
+        run: |
+          PREFORM_PRINTERS_TIMEOUT=10 bin/preform-linux printers 198.51.100.21 | head -c 300; echo
+          PREFORM_PRINTERS_TIMEOUT=3 bin/preform-linux printers 198.51.100.1 >/dev/null
+          grep -q 'printer at 198.51.100.21: Form 4' preform.log || { echo "not discovered at start"; exit 1; }
+      - name: The simulated printer received the job
+        run: grep -q 'PROTOCOL_METHOD_START_JOB' sim.log && grep -c 'PROTOCOL_METHOD_UPLOAD_LAYER' sim.log
       - name: mDNS queries PreFormServer asked the shim for
         run: grep -F '[dnsapi-shim]' preform.log | sort | uniq -c || echo "(none logged)"
       - name: Logs

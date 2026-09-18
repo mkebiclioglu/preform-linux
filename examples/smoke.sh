@@ -108,6 +108,14 @@ if r="$(op "/scene/$sid/print/" '{"printer":"Form 4","job_name":"smoke"}')"; the
   pass "print to the virtual Form 4: job $(json "d.get('job_id','')" <<<"$r")"
 else fail "print to the virtual Form 4"; fi
 
+# With SMOKE_SIM_PRINTER set to the serial of a running sim/printer-sim.py that
+# PreFormServer has discovered, send the same job over the network to it.
+if [ -n "${SMOKE_SIM_PRINTER:-}" ]; then
+  if r="$(op "/scene/$sid/print/" "{\"printer\":\"$SMOKE_SIM_PRINTER\",\"job_name\":\"smoke-sim\"}")"; then
+    pass "print to the simulated printer $SMOKE_SIM_PRINTER: job $(json "d.get('job_id','')" <<<"$r")"
+  else fail "print to the simulated printer $SMOKE_SIM_PRINTER"; fi
+fi
+
 api DELETE "/scene/$sid/" >/dev/null 2>&1 || true
 
 # Printer discovery must at least fail cleanly under Wine: a broadcast scan (no mDNS
