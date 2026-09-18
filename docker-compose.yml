@@ -20,7 +20,7 @@ services:
       PGID: ${PGID:-1000}
       # Printers by IP, probed once the server is up and every 10 minutes after
       # (LAN printers are not found by mDNS under Wine; addressing them works).
-      PREFORM_PRINTERS: ${PREFORM_PRINTERS:-}   # e.g. 10.0.0.21,printer-sim
+      PREFORM_PRINTERS: ${PREFORM_PRINTERS:-}   # IP addresses, e.g. 10.0.0.21,172.28.0.35 (the sidecar below)
       # Formlabs account for Fleet Control / Dashboard printing. Prefer the secret
       # file below over putting the password in the environment.
       FORMLABS_USERNAME: ${FORMLABS_USERNAME:-}
@@ -29,10 +29,11 @@ services:
     # secrets: [formlabs_password]
     restart: unless-stopped
     stop_grace_period: 20s
+    networks: [preform]
 
-  # Optional fake printer: `docker compose --profile sim up` starts it and PreFormServer
-  # discovers it as a Form 4 named SimForm4 (see sim/README.md). Prints go to it and
-  # are logged; nothing is made. PREFORM_PRINTERS above must include "printer-sim".
+  # Optional fake printer: `PREFORM_PRINTERS=172.28.0.35 docker compose --profile sim up`
+  # starts it at that fixed address and PreFormServer discovers it as a Form 4 named
+  # SimForm4 (see sim/README.md). Prints go to it and are logged; nothing is made.
   printer-sim:
     profiles: [sim]
     image: python:3.12-alpine
@@ -40,6 +41,15 @@ services:
     volumes:
       - ./sim:/sim:ro
     restart: unless-stopped
+    networks:
+      preform:
+        ipv4_address: 172.28.0.35
+
+networks:
+  preform:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
 
 # secrets:
 #   formlabs_password:

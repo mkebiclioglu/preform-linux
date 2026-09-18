@@ -52,10 +52,12 @@ jobs:
       - name: Start PreFormServer (downloads it from Formlabs on first start)
         run: |
           mkdir -p "$PWD/jobs"
+          # The simulator listens on the host; from the container that is the bridge gateway.
+          # PREFORM_PRINTERS takes IP addresses: names are not resolved reliably inside Wine.
+          GW=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}'); echo "gateway $GW"; echo "GW=$GW" >>"$GITHUB_ENV"
           docker run -d --name preform -p 127.0.0.1:44388:44388 -v "$PWD/jobs:/jobs" \
-            --add-host=host.docker.internal:host-gateway \
             -e PUID="$(id -u)" -e PGID="$(id -g)" -e WINEDEBUG=-all,err+all \
-            -e PREFORM_PRINTERS=198.51.100.1,host.docker.internal -e PREFORM_PRINTERS_TIMEOUT=10 -e PREFORM_PRINTERS_INTERVAL=0 \
+            -e PREFORM_PRINTERS="198.51.100.1,$GW" -e PREFORM_PRINTERS_TIMEOUT=10 -e PREFORM_PRINTERS_INTERVAL=0 \
             preform-linux:ci
       - name: Wait until the API answers
         run: |
@@ -72,12 +74,14 @@ jobs:
           PREFORM_URL: http://127.0.0.1:44388
           SMOKE_REMOTE_DIR: Z:/jobs
           SMOKE_SIM_PRINTER: SimForm4
-        run: SMOKE_LOCAL_DIR="$PWD/jobs" examples/smoke.sh
+        run: |
+          for i in $(seq 1 30); do docker logs preform 2>&1 | grep -q "printer at $GW: Form 4" && break; sleep 2; done
+          SMOKE_LOCAL_DIR="$PWD/jobs" examples/smoke.sh
       - name: Configured printers were probed at start (PREFORM_PRINTERS)
         run: |
-          for i in $(seq 1 30); do docker logs preform 2>&1 | grep -q 'printer at host.docker.internal' && break; sleep 2; done
+          for i in $(seq 1 30); do docker logs preform 2>&1 | grep -q "printer at $GW" && break; sleep 2; done
           docker logs preform 2>&1 | grep -E 'ready at|probing|printer answered|printer at|probe of .* failed' || { echo "no probe log lines"; exit 1; }
-          docker logs preform 2>&1 | grep -q 'printer at host.docker.internal: Form 4' || { echo "simulated printer not discovered at start"; exit 1; }
+          docker logs preform 2>&1 | grep -q "printer at $GW: Form 4" || { echo "simulated printer not discovered at start"; cat sim.log; exit 1; }
       - name: The simulated printer received the job
         run: |
           grep -c 'PROTOCOL_METHOD_UPLOAD_LAYER' sim.log

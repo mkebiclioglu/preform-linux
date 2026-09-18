@@ -18,9 +18,10 @@ curl -s http://127.0.0.1:44388/devices/       # id SimForm4, connection_type ETH
 # then print to it: "printer": "SimForm4" (or the IP) in POST /scene/{id}/print/
 ```
 
-With Docker Compose the simulator is a sidecar: `docker compose --profile sim up`
-starts it as `printer-sim` on the compose network and the PreFormServer container
-probes it at start (`PREFORM_PRINTERS=printer-sim`).
+With Docker Compose the simulator is a sidecar at a fixed address:
+`PREFORM_PRINTERS=172.28.0.35 docker compose --profile sim up` starts it and the
+PreFormServer container probes it at start. Give PreFormServer IP addresses, not
+names: hostnames are not resolved reliably inside Wine.
 
 Identities: `--machine FORM-4-0 --product "Form 4"` (default), `--machine FS30-1-0
 --product "Fuse 1+" --material FLP12B01`, `--machine FUSX-1-0 --product "Fuse X1"

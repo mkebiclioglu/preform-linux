@@ -126,11 +126,10 @@ an automation setup should prefer them:
    and cartridge, and prints to: job metadata, the job file and every layer arrive
    at the simulator and are logged. (A simulated Fuse 1+ or Fuse X1 is discovered
    and monitored, but SLS jobs are refused pending a firmware-version field that
-   is still being worked out.) `docker compose
-   --profile sim up` runs it as a sidecar named `printer-sim`; put that name in
-   `PREFORM_PRINTERS` and the pipeline can be rehearsed end to end, discovery and
-   upload included, before any hardware arrives. See `sim/README.md`. The CI
-   does exactly this on every run.
+   is still being worked out.) `PREFORM_PRINTERS=172.28.0.35 docker compose
+   --profile sim up` runs it as a sidecar at that address, and the pipeline can be
+   rehearsed end to end, discovery and upload included, before any hardware
+   arrives. See `sim/README.md`. The CI does exactly this on every run.
 
 PreFormServer also ships a built-in **virtual printer** per model (`GET
 /devices/`, `connection_type: VIRTUAL`, ids `Form 4`, `Fuse 1+`, `Fuse X1`, ...);
