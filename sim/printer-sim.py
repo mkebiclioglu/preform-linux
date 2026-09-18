@@ -87,13 +87,13 @@ def compat(args):
         # formule.compatible, firmware_version, firmware_build_number, layer_compatibility_number
         # and formule_compatibility_number next to each other; offer them at the top level too.
         pf = {"compatible": 1, "formule": {"compatible": [4]}, "flx": {"compatible": 6},
-              "build": {"num": [2, 5, 0] if c == "both" else [21, "dev"], "name": "2.5.0"}}
+              "build": {"num": [int(x) for x in args.firmware.split(".") if x.isdigit()] if c == "both" else [21, "dev"], "name": args.firmware}}
         return {"PF_printing": pf, "PF_updating": {"compatible": 1},
                 "PF_log_download": {"formule": {"logDownload": {"compatible": 1}}},
-                "build": {"num": [2, 5, 0], "name": "2.5.0"}, "compatible": 1,
-                "flx": {"compatible": 6}, "formule": {"compatible": [4]},
-                "firmware_version": "2.5.0", "firmware_build_number": 1234,
-                "layer_compatibility_number": 6, "formule_compatibility_number": 4}
+                "build": {"num": [int(x) for x in args.firmware.split(".") if x.isdigit()], "name": args.firmware}, "compatible": 1,
+                "flx": {"compatible": args.layer_compat}, "formule": {"compatible": [4]},
+                "firmware_version": args.firmware, "firmware_build_number": 1234,
+                "layer_compatibility_number": args.layer_compat, "formule_compatibility_number": 4}
     if c == "minimal":
         return {"PF_printing": {"compatible": 1}, "PF_updating": {"compatible": 1}}
     if c == "empty":
@@ -115,22 +115,52 @@ def information(args):
         "capabilities": [],
     }
 
+def is_sls(args):
+    m = args.machine.upper()
+    return m.startswith(("FS", "PILK", "FUSX", "FUSL"))
+
 def status(args):
-    cart = {"cartridgeMaterialCode": args.material, "cartridgeOriginalVolume_mL": 1000.0,
-            "cartridgeId": "CART-SIM-1", "cartridgeEstimatedVolumeDispensed_mL": 100.0,
-            "cartridgeMeasuredVolume_mL": 900.0}
-    return {
-        # Shared/src/GetStatus.cpp
-        "tankMaterialCode": args.material, "tankId": "TANK-SIM-1",
+    """GET_STATUS reply. Shared/src/GetStatus.cpp keys for everyone; then the SLA (Diesel
+    GetStatus_v3 + v1/v2 cartridge fields) or the SLS (PilkingtonGetStatus_v1 +
+    FuseGetStatusResponse_v3 + cylinder structs) keys, each with the type its parser checks."""
+    shared = {
         "isPrinting": False, "isOpenMode": False, "isPrimed": True, "isRemotePrintEnabled": False,
         "readyToPrintNow_v2": "READY_TO_PRINT_READY",
         "buildPlatformContents_v2": "BUILD_PLATFORM_CONTENTS_CONFIRMED_CLEAR",
         "buildPlatformType": "BUILD_PLATFORM_TYPE_UNKNOWN",
         "estimatedTotalPrintTime_ms": 0.0, "estimatedPrintTimeRemaining_ms": 0.0,
         "isPrePrint": False, "isDashboardRegistrationAllowed": False, "printerIssues": [],
+    }
+    if is_sls(args):
+        cyl = {"cylinderMaterialCode": args.material, "cylinderMechanicalVersion": 1.0, "cylinderSerial": "CYL-SIM-1",
+               "cylinderStatus": "CYLINDER_STATUS_INSERTED"}
+        tracking = {"numberOfPrints": 3.0, "numberOfLayers": 3000.0, "numberOfLayersSinceSealReplacement": 3000.0,
+                    "totalTravel_mm": 300.0, "totalTravelSinceSealReplacement_mm": 300.0}
+        last = {"jobGuid": "{00000000-0000-0000-0000-000000000000}", "printGuid": "{00000000-0000-0000-0000-000000000000}",
+                "layersPrinted": 0.0, "totalLayers": 0.0, "printerSerial": args.serial, "metadataUpdateTimestamp": "2026-01-01T00:00:00Z"}
+        return {**shared,
+            # PilkingtonGetStatus_v1.cpp
+            "heightColdFills_mm": 0.0, "heightHotPrecoats_mm": 0.0, "heightCorePrint_mm": 0.0, "heightPostPrint_mm": 0.0,
+            "jobBundleIndex": 0.0, "jobGuid": "{00000000-0000-0000-0000-000000000000}",
+            "cylinderMaterialCode": args.material, "cylinderMechanicalVersion": 1.0, "cylinderSerial": "CYL-SIM-1",
+            "powderLevel": args.powder_level, "voltageCode": "230V", "cylinderZAxisRange_mm": 300.0,
+            "cylinderTracking": tracking, "cylinderLastPrint": last,
+            "printerMaterial": args.material, "materialCredit_g": 100000.0,
+            "printingLayer": -1.0, "printingJobRevision": 0.0, "printingJobGuid": "{00000000-0000-0000-0000-000000000000}",
+            "highLevelState": "HIGH_LEVEL_STATE__PRINTER_IDLE",
+            "bedTemperature_C": 25.0, "primedTimeout_UnixStamp": 0.0, "currentlyRunningJobHeights": [], "isAcceptingJobs": True,
+            # FuseGetStatusResponse_v3.cpp
+            "printerState": "USER_STATE_IDLE", "estimatedPreprintTime_ms": 0.0, "estimatedPostprintTime_ms": 0.0,
+            "totalPrintTimeRemaining_ms": 0.0, "totalPreprintTimeRemaining_ms": 0.0, "totalPostprintTimeRemaining_ms": 0.0,
+            "currentBedTemperature_C": 25.0, "cylinderInfo": cyl, "printerPowderLevel_L": 10.0,
+        }
+    cart = {"cartridgeMaterialCode": args.material, "cartridgeOriginalVolume_mL": 1000.0,
+            "cartridgeId": "CART-SIM-1", "cartridgeEstimatedVolumeDispensed_mL": 100.0,
+            "cartridgeMeasuredVolume_mL": 900.0}
+    return {**shared,
+        "tankMaterialCode": args.material, "tankId": "TANK-SIM-1",
         # Diesel/src/GetStatus_v3.cpp
-        "tankTypeString": "FLGPBK05", "readyToPrintNow": True,
-        "printerState": "USER_STATE_IDLE",
+        "tankTypeString": args.material, "readyToPrintNow": True, "printerState": "USER_STATE_IDLE",
         "cartridges": [cart], "tankVersionMajor": 1.0, "tankVersionMinor": 0.0,
         "cameraStatus": "CAMERA_STATE_DISABLED", "pumpStatus": "PUMP_STATE_NOT_PRESENT",
         # GetStatus_v1.h / v2.h
@@ -141,16 +171,6 @@ def status(args):
         "frontCartridgeEstimatedVolumeDispensed_mL": 100.0,
         "backCartridgeMaterialCode": args.material, "backCartridgeOriginalVolume_mL": 1000.0, "backCartridgeId": "CART-SIM-2",
         "backCartridgeEstimatedVolumeDispensed_mL": 0.0,
-        # Fuse / Pilkington (harmless for an SLA identity; a Fuse identity needs them)
-        "printerMaterial": args.material, "printerPowderLevel_L": 10.0, "isAcceptingJobs": True,
-        "estimatedPreprintTime_ms": 0.0, "estimatedPostprintTime_ms": 0.0, "totalPrintTimeRemaining_ms": 0.0,
-        "totalPreprintTimeRemaining_ms": 0.0, "totalPostprintTimeRemaining_ms": 0.0,
-        "cylinderMaterialCode": args.material, "cylinderMechanicalVersion": 1.0, "cylinderSerial": "CYL-SIM-1",
-        "cylinderZAxisRange_mm": 300.0, "materialCredit_g": 0.0, "printingLayer": -1.0, "printingJobRevision": 0.0,
-        "printingJobGuid": "{00000000-0000-0000-0000-000000000000}", "jobGuid": "{00000000-0000-0000-0000-000000000000}",
-        "bedTemperature_C": 25.0, "primedTimeout_UnixStamp": 0.0, "currentlyRunningJobHeights": [],
-        "heightColdFills_mm": 0.0, "heightPostPrint_mm": 0.0, "heightHotPrecoats_mm": 0.0, "heightCorePrint_mm": 0.0,
-        "jobBundleIndex": 0.0,
     }
 
 def reply(args, msg, attachment):
@@ -202,7 +222,10 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--bind", default="0.0.0.0")
     p.add_argument("--port", type=int, default=35)
-    p.add_argument("--compat", default="mirror", choices=["mirror", "wide", "big", "topfields", "both", "minimal", "empty"])
+    p.add_argument("--compat", default="both", choices=["mirror", "wide", "big", "topfields", "both", "minimal", "empty"])
+    p.add_argument("--firmware", default="2.5.0", help="firmware version PreFormServer will show for the printer")
+    p.add_argument("--layer-compat", type=int, default=6, help="layer (flx) compatibility number")
+    p.add_argument("--powder-level", default="FULL")
     p.add_argument("--product", default="Form 4")
     p.add_argument("--machine", default="FORM-4-0")
     p.add_argument("--material", default="FLGPBK05")
