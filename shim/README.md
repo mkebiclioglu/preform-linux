@@ -14,7 +14,14 @@ make check  # verifies the exports
 
 Set `PREFORM_SHIM_TRACE=1` (bare metal, or `-e PREFORM_SHIM_TRACE=1` in Docker with
 `PREFORM_SHIM=1`) and the shim logs every `DnsStartMulticastQuery` request
-PreFormServer makes: the mDNS service name, record type and options. That is the
-specification for a real implementation, which is the next step if LAN
-discovery under Wine is wanted (see the README's *Printers* section for what
-works without it).
+PreFormServer makes: the mDNS service name, record type and options. PreFormServer
+3.63.0 asks for exactly one thing, right after it opens its HTTP port and again on
+every broadcast `discover-devices`:
+
+```
+DnsStartMulticastQuery version=1 query="_formlabs_formule._tcp.local" type=12 options=0x0 interface=0
+```
+
+(type 12 is PTR.) That is the specification for a real implementation, which is
+the next step if LAN discovery under Wine is wanted (see the README's *Printers*
+section for what works without it).

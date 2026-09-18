@@ -111,11 +111,12 @@ an automation setup should prefer them:
 3. **mDNS discovery: not under Wine.** PreFormServer discovers LAN printers with
    Windows' `DnsStartMulticastQuery`, which Wine 11.13+ (and the shim for older
    Wine) implements as a stub that never answers. `POST /discover-devices/`
-   without an address therefore returns nothing. If you need zero-config
-   discovery, `PREFORM_SHIM_TRACE=1` logs the exact queries PreFormServer makes;
-   a real implementation in `shim/dnsapi.c` (Winsock multicast to
-   224.0.0.251:5353, plus `--network host` for the container) is the path, and
-   contributions are welcome.
+   without an address therefore returns nothing. The query it makes (captured
+   with `PREFORM_SHIM_TRACE=1` in CI) is a PTR lookup for
+   `_formlabs_formule._tcp.local`, so a real implementation in `shim/dnsapi.c`
+   (Winsock multicast to 224.0.0.251:5353, answer with the PTR/SRV/A records,
+   plus `--network host` for the container) is a well-defined job; contributions
+   are welcome.
 
 **USB printers** are out of reach: PreFormServer drives them through a bundled
 Windows `libusb-1.0.dll` and Wine has no USB passthrough. A winelib
