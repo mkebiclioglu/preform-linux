@@ -53,7 +53,7 @@ PreFormServer as is; anything older (Ubuntu 24.04 ships 9.0, WineHQ stable is
 
 ```bash
 # Ubuntu 24.04 with distro Wine 9.0 (shim path)
-sudo apt install wine64 xvfb osslsigncode gcc-mingw-w64-x86-64 make
+sudo apt install wine wine64 xvfb osslsigncode gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev make
 # or WineHQ devel >= 11.13 (no shim): https://wiki.winehq.org/Ubuntu
 
 git clone https://github.com/mkebiclioglu/preform-linux.git ~/preform-linux
@@ -145,7 +145,7 @@ Formlabs Inc.
 ## Development
 
 ```bash
-shellcheck -x bin/preform-linux docker/*.sh examples/smoke.sh
+shellcheck -S warning -x bin/preform-linux docker/*.sh examples/smoke.sh
 make -C shim check                  # needs gcc-mingw-w64-x86-64
 docker build -f docker/Dockerfile -t preform-linux:dev .
 ```

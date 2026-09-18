@@ -7,7 +7,7 @@
 
 FROM ubuntu:24.04 AS shim
 RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 make \
+ && apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev binutils-mingw-w64-x86-64 make \
  && rm -rf /var/lib/apt/lists/*
 COPY shim /src/shim
 RUN make -C /src/shim dnsapi.dll check

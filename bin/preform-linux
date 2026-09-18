@@ -46,11 +46,18 @@ log()  { printf '[preform-linux] %s\n' "$*" >&2; }
 die()  { log "error: $*"; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Ubuntu's wine64 package ships only /usr/bin/wine64; WineHQ and most distros ship wine.
+WINE="${WINE:-}"
+if [ -z "$WINE" ]; then
+  if have wine; then WINE=wine; elif have wine64; then WINE=wine64; else WINE=wine; fi
+fi
+have_wine() { have "$WINE"; }
+
 version_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]; }
 
 wine_version() {
-  have wine || return 1
-  wine --version 2>/dev/null | sed -n 's/^wine-\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p'
+  have_wine || return 1
+  "$WINE" --version 2>/dev/null | sed -n 's/^wine-\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p'
 }
 
 needs_shim() {
@@ -63,7 +70,7 @@ needs_shim() {
   ! version_ge "$v" "$WINE_MIN_FOR_NO_SHIM"
 }
 
-installed_version() { [ -f "$META" ] && sed -n 's/^version=//p' "$META" || true; }
+installed_version() { if [ -f "$META" ]; then sed -n 's/^version=//p' "$META"; fi; }
 
 # --- release discovery -------------------------------------------------------
 
@@ -149,9 +156,9 @@ with_display() {
 init_prefix() {
   mkdir -p "$WINEPREFIX"
   log "initialising Wine prefix at $WINEPREFIX"
-  with_display wineboot --init >/dev/null 2>&1 || die "wineboot failed"
+  with_display "$WINE" wineboot --init >/dev/null 2>&1 || die "wineboot failed"
   # Never auto-attach winedbg: a crashed PreFormServer must exit, not hang for a debugger.
-  wine reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\AeDebug' /v Auto /t REG_DWORD /d 0 /f >/dev/null 2>&1 || true
+  "$WINE" reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\AeDebug' /v Auto /t REG_DWORD /d 0 /f >/dev/null 2>&1 || true
   wineserver -w
 }
 
@@ -160,7 +167,8 @@ init_prefix() {
 cmd_install() {
   local force=0
   for a in "$@"; do case "$a" in --force) force=1 ;; *) die "unknown option $a" ;; esac; done
-  for t in curl unzip wine; do have "$t" || die "$t is not installed"; done
+  for t in curl unzip; do have "$t" || die "$t is not installed"; done
+  have_wine || die "wine is not installed (or set WINE to the binary)"
 
   local url version
   url="$(latest_release_url)"
@@ -241,7 +249,7 @@ cmd_run() {
   trap cleanup EXIT
 
   log "starting PreFormServer $(installed_version) on port $PREFORM_PORT (Wine $(wine_version), DISPLAY=$DISPLAY, QT_OPENGL=$QT_OPENGL${PREFORM_TELEMETRY:+, telemetry on})"
-  (cd "$INSTALL_DIR" && exec wine "$EXE" --port "$PREFORM_PORT" "$@") &
+  (cd "$INSTALL_DIR" && exec "$WINE" "$EXE" --port "$PREFORM_PORT" "$@") &
   wine_pid=$!
   set +e
   wait "$wine_pid"
@@ -258,7 +266,7 @@ cmd_doctor() {
   echo "home:            $PREFORM_LINUX_HOME"
   echo "prefix:          $WINEPREFIX $([ -f "$WINEPREFIX/system.reg" ] && echo '(initialised)' || echo '(not initialised)')"
   if v="$(wine_version)" && [ -n "$v" ]; then
-    echo "wine:            $(wine --version) at $(command -v wine)"
+    echo "wine:            $("$WINE" --version) at $(command -v "$WINE")"
     if version_ge "$v" "$WINE_MIN_FOR_NO_SHIM"; then echo "dnsapi:          Wine >= $WINE_MIN_FOR_NO_SHIM implements DnsStartMulticastQuery; no shim needed"
     else echo "dnsapi:          Wine < $WINE_MIN_FOR_NO_SHIM; the shim is required $(have x86_64-w64-mingw32-gcc && echo '(mingw-w64 found)' || echo '(install gcc-mingw-w64-x86-64 or upgrade Wine)')"; fi
   else echo "wine:            MISSING"; ok=0; fi
@@ -287,7 +295,7 @@ case "$cmd" in
   install)   cmd_install "$@" ;;
   run)       cmd_run "$@" ;;
   doctor)    cmd_doctor ;;
-  wine)      launch_env; with_display wine "$@" ;;
+  wine)      launch_env; with_display "$WINE" "$@" ;;
   uninstall) cmd_uninstall ;;
   version|--version) echo "$PREFORM_LINUX_VERSION" ;;
   ""|help|-h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;

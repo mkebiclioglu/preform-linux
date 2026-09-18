@@ -1,6 +1,7 @@
 # Builds dnsapi.dll, the shim that lets PreFormServer start under Wine < 11.13.
-CC      ?= x86_64-w64-mingw32-gcc
-OBJDUMP ?= x86_64-w64-mingw32-objdump
+# make predefines CC, so ?= would keep the host compiler; override with MINGW_CC if needed.
+CC      := $(or $(MINGW_CC),x86_64-w64-mingw32-gcc)
+OBJDUMP := $(or $(MINGW_OBJDUMP),x86_64-w64-mingw32-objdump)
 CFLAGS  ?= -O2 -Wall -Wextra
 EXPORTS  = DnsExtractRecordsFromMessage_W DnsFree DnsQueryEx DnsStartMulticastQuery DnsStopMulticastQuery DnsWriteQuestionToBuffer_W
 

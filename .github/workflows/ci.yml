@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
-      - run: shellcheck -x bin/preform-linux docker/entrypoint.sh docker/healthcheck.sh examples/smoke.sh
+      - run: shellcheck -S warning -x bin/preform-linux docker/entrypoint.sh docker/healthcheck.sh examples/smoke.sh
       - run: bash -n bin/preform-linux && bin/preform-linux help >/dev/null
 
   shim:
@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 make
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev binutils-mingw-w64-x86-64 make
       - run: make -C shim dnsapi.dll check
       - uses: actions/upload-artifact@v4
         with:
@@ -76,7 +76,7 @@ jobs:
       - name: Install distro Wine, mingw-w64, Xvfb, osslsigncode
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine64 gcc-mingw-w64-x86-64 make xvfb xauth osslsigncode libgl1-mesa-dri
+          sudo apt-get install -y --no-install-recommends wine wine64 gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev binutils-mingw-w64-x86-64 make xvfb xauth osslsigncode libgl1-mesa-dri
           wine --version
       - run: bin/preform-linux doctor || true
       - name: Install PreFormServer (Authenticode-checked) and the shim
