@@ -166,13 +166,19 @@ with_display() {
   fi
 }
 
+disable_winedbg() {
+  # Never auto-attach winedbg: a crashed PreFormServer must exit, not hang for a debugger.
+  "$WINE" reg add 'HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug' /v Auto /t REG_DWORD /d 0 /f >/dev/null 2>&1 || true
+}
+
 init_prefix() {
   mkdir -p "$WINEPREFIX"
-  log "initialising Wine prefix at $WINEPREFIX"
-  with_display "$WINE" wineboot --init >/dev/null 2>&1 || die "wineboot failed"
-  # Never auto-attach winedbg: a crashed PreFormServer must exit, not hang for a debugger.
-  "$WINE" reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\AeDebug' /v Auto /t REG_DWORD /d 0 /f >/dev/null 2>&1 || true
-  wineserver -w
+  log "initialising Wine prefix at $WINEPREFIX (takes a minute the first time)"
+  with_display timeout 600 "$WINE" wineboot --init >/dev/null 2>&1 || die "wineboot --init failed or timed out"
+  disable_winedbg
+  # Wine 11 keeps services.exe & co. alive after wineboot, so waiting for the server to exit
+  # would hang; give it a moment and then shut the prefix down explicitly.
+  timeout 20 wineserver -w 2>/dev/null || wineserver -k 2>/dev/null || true
 }
 
 # --- commands ------------------------------------------------------------------------
@@ -265,6 +271,7 @@ cmd_run() {
   trap 'cleanup; exit 143' TERM INT
   trap cleanup EXIT
 
+  disable_winedbg
   log "starting PreFormServer $(installed_version) on port $PREFORM_PORT (Wine $(wine_version), DISPLAY=$DISPLAY, QT_OPENGL=$QT_OPENGL${PREFORM_TELEMETRY:+, telemetry on})"
   (cd "$INSTALL_DIR" && exec "$WINE" "$EXE" --port "$PREFORM_PORT" "$@") &
   wine_pid=$!
