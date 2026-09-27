@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.1 (2026-09-27)
+
+- Checked against PreFormServer 3.63.1 (Local API 0.9.31): the CI runs, which install
+  the latest release, pass on the Docker image and on bare metal. Fuse X1 behaves as in
+  3.63.0.
+- Docker image: Wine 11.18 (was 11.17).
+- Simulator: `--capabilities`, list-shaped compatibility, build number and printer
+  state options, and SLS identities that report the capability names PreFormServer's
+  print settings ask for. `research/README.md` records why a simulated SLS printer
+  still cannot take a job: PreFormServer derives SLS capabilities from genuine
+  firmware versions, not from anything the printer reports.
+- CI: GitHub Actions pinned to commit SHAs (checkout 7, upload-artifact 7, Docker
+  actions on Node 24) and kept current by Dependabot.
+
 ## 0.3.0 (2026-09-18)
 
 - **Simulated printer.** `sim/printer-sim.py` is a fake Formlabs printer on TCP port

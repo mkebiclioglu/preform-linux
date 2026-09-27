@@ -55,7 +55,7 @@ Want a self-contained private image with PreFormServer baked in?
 ## Quick start (bare metal)
 
 Needs Wine **11.5 or newer**, Xvfb, curl, unzip and osslsigncode. Distro Wine
-will not do: PreFormServer 3.63.0's Qt imports the Windows ICU libraries, which
+will not do: PreFormServer 3.63's Qt imports the Windows ICU libraries, which
 Wine only gained in 11.5 (March 2026), and Ubuntu 24.04 ships 9.0. Install
 [WineHQ devel](https://wiki.winehq.org/Ubuntu) (11.13 or newer runs it as is;
 11.5 to 11.12 also need `gcc-mingw-w64-x86-64` so the installer can build a
@@ -134,13 +134,13 @@ an automation setup should prefer them:
 PreFormServer also ships a built-in **virtual printer** per model (`GET
 /devices/`, `connection_type: VIRTUAL`, ids `Form 4`, `Fuse 1+`, `Fuse X1`, ...);
 `{"printer": "Form 4"}` in a print request runs job generation without any
-network. The virtual SLS printers refuse jobs in 3.63.0; the simulator does not.
+network. The virtual SLS printers refuse jobs in 3.63; the simulator does not.
 
-**Fuse X1.** PreFormServer 3.63.0 prepares Fuse X1 jobs (`machine_type`
+**Fuse X1.** PreFormServer 3.63 (3.63.0 and 3.63.1) prepares Fuse X1 jobs (`machine_type`
 `FUSX-1-0`, material `FLP12G01`, `layer_thickness_mm` 0.11, the one print
 setting it ships for the printer): import, print-time estimate and `.form` export
 work, and a simulated Fuse X1 is discovered and monitored. What does not work in
-this release: `list-materials` leaves the family out, so clients that only trust
+these releases: `list-materials` leaves the family out, so clients that only trust
 that list never see the code (formlabs-local-mcp fills the gap); any other
 material or layer height answers `Scene type not supported`; `auto-pack` and
 `auto-layout` are refused for this machine type, so models stay where import
@@ -178,7 +178,7 @@ queue.
   even without a window, so `run` starts a private Xvfb. Rendering goes through
   the Mesa software renderer that Formlabs bundles (`opengl32sw.dll`) via
   `QT_OPENGL=software`; no GPU or GLX is required.
-- **Wine 11.5+.** Qt6Core in PreFormServer 3.63.0 imports `icuuc.dll`, the ICU
+- **Wine 11.5+.** Qt6Core in PreFormServer 3.63 imports `icuuc.dll`, the ICU
   build Windows 10 ships in System32. Wine added `icu`, `icuuc` and `icuin`
   in 11.5; on anything older the loader stops with `STATUS_DLL_NOT_FOUND`
   before a single line of PreFormServer runs. `install` and `run` refuse older
@@ -230,7 +230,7 @@ queue.
 | `WINEPREFIX`, `WINEDEBUG`, `WINEDLLOVERRIDES` | prefix under home, `-all`, `mscoree=d;mshtml=d` | Passed to Wine. |
 
 Docker build arguments: `WINE_BRANCH` (`devel`), `WINE_VERSION`
-(`11.17~noble-1`), `PREFORM_VERSION` (`latest`), `BUNDLE` (`0`). Container
+(`11.18~noble-1`), `PREFORM_VERSION` (`latest`), `BUNDLE` (`0`). Container
 environment: `PUID`/`PGID` (`1000`) own `/data` and `/jobs`; every `PREFORM_*`,
 `FORMLABS_*`, `QT_*` and `WINE*` variable is passed through to PreFormServer.
 Image tags: `latest` and `X.Y.Z` from releases, `main` from every green build of

@@ -15,7 +15,7 @@ RUN make -C /src/shim dnsapi.dll check
 
 FROM ubuntu:24.04
 ARG WINE_BRANCH=devel
-ARG WINE_VERSION=11.17~noble-1
+ARG WINE_VERSION=11.18~noble-1
 ENV DEBIAN_FRONTEND=noninteractive
 RUN dpkg --add-architecture i386 \
  && apt-get update \
