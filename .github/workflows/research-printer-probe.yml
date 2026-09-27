@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download the latest PreFormServer release
         run: |
           url=$(curl -fsSL -A preform-linux-research https://formlabs.com/support/Formlabs-API-downloads-and-release-notes \
@@ -45,7 +45,7 @@ jobs:
           echo "== camelCase keys of interest"; cat ascii.txt utf16.txt | grep -E '^(serial|firmware|product|machine|printer|status|protocol|result|response|error|parameters|payload|body|attachment|version|method|id|job|print|tank|cartridge|device|info)[A-Za-z_]{0,40}$' | sort | uniq -c | sort -rn | head -200
       - name: Pack the dumps
         run: gzip -k ascii.txt utf16.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: strings
           path: |
@@ -67,7 +67,7 @@ jobs:
       PREFORM_STARTUP_TIMEOUT: "400"
       NET: 198.51.100
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install WineHQ devel, mingw-w64, Xvfb, osslsigncode
         run: |
           sudo dpkg --add-architecture i386
@@ -205,7 +205,7 @@ jobs:
       - name: PreFormServer log
         if: always()
         run: grep -v -E 'Received (GET|POST)|incoming connection|disconnected' preform.log | tail -n 120
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: probe-shim-${{ matrix.shim }}
@@ -224,7 +224,7 @@ jobs:
       WINEDEBUG: "-all,err+all"
       PREFORM_STARTUP_TIMEOUT: "400"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install WineHQ devel, Xvfb, osslsigncode
         run: |
           sudo dpkg --add-architecture i386
