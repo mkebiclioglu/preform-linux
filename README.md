@@ -192,7 +192,7 @@ queue.
   `11bca8ddea`) added it as a stub that reports success. For older Wine,
   `shim/dnsapi.c` is a small DLL that does the same (plus the handful of
   dnsapi entry points Qt and Wine's own iphlpapi, ws2_32 and netapi32 expect)
-  and is loaded with `WINEDLLOVERRIDES=dnsapi=n`; the installer builds it only
+  and is loaded with `WINEDLLOVERRIDES=dnsapi=n,b`; the installer builds it only
   when needed.
 - **After "READY FOR INPUT".** `run` watches PreFormServer's output; once it is
   ready it logs in to Formlabs if an account is configured and probes the

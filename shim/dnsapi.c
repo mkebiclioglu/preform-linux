@@ -19,7 +19,7 @@
  *  - Wine's ws2_32.dll and netapi32.dll: DnsQuery_A/W, DnsRecordListFree
  *    (fail cleanly; ordinary name resolution uses getaddrinfo, not these).
  *
- * Load it with WINEDLLOVERRIDES="dnsapi=n" from PreFormServer's directory.
+ * Load it with WINEDLLOVERRIDES="dnsapi=n,b" from PreFormServer's directory.
  * Build: make (needs x86_64-w64-mingw32-gcc).
  */
 #include <windows.h>
