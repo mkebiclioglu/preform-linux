@@ -345,7 +345,9 @@ cmd_install() {
 launch_env() {
   [ "${PREFORM_TELEMETRY:-0}" = "1" ] || export DISABLE_PREFORMSERVER_TELEMETRY=1
   export QT_OPENGL="${QT_OPENGL:-software}"
-  [ -f "$INSTALL_DIR/dnsapi.dll" ] && export WINEDLLOVERRIDES="dnsapi=n;$WINEDLLOVERRIDES"
+  # n,b: PreFormServer.exe loads the shim from its own directory; Wine's own processes
+  # (services.exe & co., which load dnsapi from Wine 11.19) fall back to the builtin.
+  [ -f "$INSTALL_DIR/dnsapi.dll" ] && export WINEDLLOVERRIDES="dnsapi=n,b;$WINEDLLOVERRIDES"
   [ "${PREFORM_SHIM_TRACE:-0}" = "1" ] && export PREFORM_SHIM_TRACE
   return 0
 }

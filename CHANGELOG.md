@@ -3,6 +3,9 @@
 ## 0.3.2 (2026-10-03)
 
 - Docker image: Wine 11.19 (was 11.18). Still PreFormServer 3.63.1 (Local API 0.9.31).
+- dnsapi shim: the override is now `dnsapi=n,b`, so Wine's own services fall back to the
+  builtin dnsapi. With `n` alone, Wine 11.19's service manager failed to start and
+  PreFormServer never came up on bare metal with the shim installed.
 
 ## 0.3.1 (2026-09-27)
 
