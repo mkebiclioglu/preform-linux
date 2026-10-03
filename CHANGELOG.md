@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2 (2026-10-03)
+
+- Docker image: Wine 11.19 (was 11.18). Still PreFormServer 3.63.1 (Local API 0.9.31).
+
 ## 0.3.1 (2026-09-27)
 
 - Checked against PreFormServer 3.63.1 (Local API 0.9.31): the CI runs, which install
