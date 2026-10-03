@@ -192,7 +192,7 @@ queue.
   `11bca8ddea`) added it as a stub that reports success. For older Wine,
   `shim/dnsapi.c` is a small DLL that does the same (plus the handful of
   dnsapi entry points Qt and Wine's own iphlpapi, ws2_32 and netapi32 expect)
-  and is loaded with `WINEDLLOVERRIDES=dnsapi=n`; the installer builds it only
+  and is loaded with `WINEDLLOVERRIDES=dnsapi=n,b`; the installer builds it only
   when needed.
 - **After "READY FOR INPUT".** `run` watches PreFormServer's output; once it is
   ready it logs in to Formlabs if an account is configured and probes the
@@ -230,7 +230,7 @@ queue.
 | `WINEPREFIX`, `WINEDEBUG`, `WINEDLLOVERRIDES` | prefix under home, `-all`, `mscoree=d;mshtml=d` | Passed to Wine. |
 
 Docker build arguments: `WINE_BRANCH` (`devel`), `WINE_VERSION`
-(`11.18~noble-1`), `PREFORM_VERSION` (`latest`), `BUNDLE` (`0`). Container
+(`11.19~noble-1`), `PREFORM_VERSION` (`latest`), `BUNDLE` (`0`). Container
 environment: `PUID`/`PGID` (`1000`) own `/data` and `/jobs`; every `PREFORM_*`,
 `FORMLABS_*`, `QT_*` and `WINE*` variable is passed through to PreFormServer.
 Image tags: `latest` and `X.Y.Z` from releases, `main` from every green build of

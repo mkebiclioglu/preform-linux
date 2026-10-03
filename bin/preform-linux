@@ -31,7 +31,7 @@
 #   WINEDEBUG                 Wine log channels (default: -all)
 set -euo pipefail
 
-PREFORM_LINUX_VERSION="0.3.1"
+PREFORM_LINUX_VERSION="0.3.2"
 PREFORM_LINUX_HOME="${PREFORM_LINUX_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/preform-linux}"
 PREFORM_PORT="${PREFORM_PORT:-44388}"
 PREFORM_VERSION="${PREFORM_VERSION:-latest}"
@@ -332,7 +332,8 @@ cmd_install() {
   fi
 
   if needs_shim; then
-    log "Wine $(wine_version) lacks DnsStartMulticastQuery; installing the dnsapi shim"
+    if [ "${PREFORM_SHIM:-}" = "1" ]; then log "PREFORM_SHIM=1; installing the dnsapi shim"
+    else log "Wine $(wine_version) lacks DnsStartMulticastQuery; installing the dnsapi shim"; fi
     build_shim "$INSTALL_DIR/dnsapi.dll"
   else
     rm -f "$INSTALL_DIR/dnsapi.dll"
@@ -345,7 +346,9 @@ cmd_install() {
 launch_env() {
   [ "${PREFORM_TELEMETRY:-0}" = "1" ] || export DISABLE_PREFORMSERVER_TELEMETRY=1
   export QT_OPENGL="${QT_OPENGL:-software}"
-  [ -f "$INSTALL_DIR/dnsapi.dll" ] && export WINEDLLOVERRIDES="dnsapi=n;$WINEDLLOVERRIDES"
+  # n,b: PreFormServer.exe loads the shim from its own directory; Wine's own processes
+  # (services.exe & co., which load dnsapi from Wine 11.19) fall back to the builtin.
+  [ -f "$INSTALL_DIR/dnsapi.dll" ] && export WINEDLLOVERRIDES="dnsapi=n,b;$WINEDLLOVERRIDES"
   [ "${PREFORM_SHIM_TRACE:-0}" = "1" ] && export PREFORM_SHIM_TRACE
   return 0
 }
