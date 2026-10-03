@@ -332,7 +332,8 @@ cmd_install() {
   fi
 
   if needs_shim; then
-    log "Wine $(wine_version) lacks DnsStartMulticastQuery; installing the dnsapi shim"
+    if [ "${PREFORM_SHIM:-}" = "1" ]; then log "PREFORM_SHIM=1; installing the dnsapi shim"
+    else log "Wine $(wine_version) lacks DnsStartMulticastQuery; installing the dnsapi shim"; fi
     build_shim "$INSTALL_DIR/dnsapi.dll"
   else
     rm -f "$INSTALL_DIR/dnsapi.dll"
