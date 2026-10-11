@@ -45,7 +45,7 @@ jobs:
           echo "== camelCase keys of interest"; cat ascii.txt utf16.txt | grep -E '^(serial|firmware|product|machine|printer|status|protocol|result|response|error|parameters|payload|body|attachment|version|method|id|job|print|tank|cartridge|device|info)[A-Za-z_]{0,40}$' | sort | uniq -c | sort -rn | head -200
       - name: Pack the dumps
         run: gzip -k ascii.txt utf16.txt
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: strings
           path: |
@@ -205,7 +205,7 @@ jobs:
       - name: PreFormServer log
         if: always()
         run: grep -v -E 'Received (GET|POST)|incoming connection|disconnected' preform.log | tail -n 120
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: probe-shim-${{ matrix.shim }}
