@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3 (2026-10-23)
+
+- Docker image: Wine 11.20 (was 11.19), rebuilt on current Ubuntu 24.04 packages.
+- Checked against PreFormServer 3.64.1: the CI runs, which install the latest release,
+  pass on the Docker image and on bare metal.
+- CI: actions/upload-artifact 7.0.2; Dependabot waits 3 days before proposing new releases.
+
 ## 0.3.2 (2026-10-03)
 
 - Docker image: Wine 11.19 (was 11.18). Still PreFormServer 3.63.1 (Local API 0.9.31).
