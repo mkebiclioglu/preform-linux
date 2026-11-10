@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Signature check: only the certificate under osslsigncode's "Signer's certificate:" heading
+  is accepted as the signer. osslsigncode up to 2.7 (Ubuntu 24.04, Debian 12) also prints
+  every certificate embedded in the signature, and a "Formlabs Inc." subject found there
+  used to satisfy the check.
+- Downloads refuse a redirect to anything but HTTPS.
+- Docker image: Wine 11.21 (was 11.20).
+- CI: docker/login-action 4.8.0.
+
 ## 0.3.3 (2026-10-23)
 
 - Docker image: Wine 11.20 (was 11.19), rebuilt on current Ubuntu 24.04 packages.
