@@ -103,7 +103,7 @@ installed_version() { if [ -f "$META" ]; then sed -n 's/^version=//p' "$META"; f
 
 latest_release_url() {
   local html
-  html="$(curl -fsSL --max-time 30 -A "preform-linux/$PREFORM_LINUX_VERSION" "$DOWNLOAD_PAGE")" || die "could not read $DOWNLOAD_PAGE"
+  html="$(curl -fsSL --proto '=https' --max-time 30 -A "preform-linux/$PREFORM_LINUX_VERSION" "$DOWNLOAD_PAGE")" || die "could not read $DOWNLOAD_PAGE"
   printf '%s' "$html" \
     | grep -oE 'https://downloads\.formlabs\.com/PreFormServer/Release/[0-9.]+/PreForm_Server_win_[A-Za-z0-9._-]+\.zip' \
     | sort -u \
@@ -123,16 +123,31 @@ check_pinned_root() {
   [ "${fp^^}" = "$MS_ROOT_FINGERPRINT" ] || die "trust anchor fingerprint mismatch: $fp"
 }
 
-# True when some "Subject:" line carries both CN=Formlabs Inc. and O=Formlabs Inc.
-# (osslsigncode prints "CN=..., O=..." or OpenSSL's legacy "/C=US/.../CN=..." form).
+# The subject of the certificate that signed, one line per signature in the file: the first
+# "Subject:" under each "Signer's certificate:" heading (an empty line when there is none).
+# Nothing else counts. osslsigncode up to 2.7 also lists every certificate embedded in the
+# signature ("Number of certificates:"), and that list is not covered by the signature.
+signer_subjects() {
+  awk '
+    /^Signer.s certificate:[[:space:]]*$/ { if (pending) print ""; pending = 1; n = 0; next }
+    pending {
+      n++
+      if ($0 ~ /^[[:space:]]*Subject *:/) { sub(/^[[:space:]]*Subject *: */, ""); print; pending = 0 }
+      else if (n >= 3) { print ""; pending = 0 }
+    }
+    END { if (pending) print "" }
+  ' <<<"$1"
+}
+
+# True when every signature was made by a certificate carrying both CN=Formlabs Inc. and
+# O=Formlabs Inc. (osslsigncode prints "CN=..., O=..." or OpenSSL's legacy "/C=US/.../CN=..." form).
 subjects_name_formlabs() {
-  local subj
+  local subj n=0
   while IFS= read -r subj; do
-    if grep -qE '(^|[,/] *)CN=Formlabs Inc\.( *[,/]|$)' <<<"$subj" && grep -qE '(^|[,/] *)O=Formlabs Inc\.( *[,/]|$)' <<<"$subj"; then
-      return 0
-    fi
-  done < <(sed -n 's/^.*Subject: *//p' <<<"$1")
-  return 1
+    n=$((n + 1))
+    grep -qE '(^|[,/] *)CN=Formlabs Inc\.( *[,/]|$)' <<<"$subj" && grep -qE '(^|[,/] *)O=Formlabs Inc\.( *[,/]|$)' <<<"$subj" || return 1
+  done < <(signer_subjects "$1")
+  [ "$n" -gt 0 ]
 }
 
 verify_authenticode() {
@@ -320,7 +335,7 @@ cmd_install() {
     # shellcheck disable=SC2064
     trap "rm -rf '$tmp'" EXIT
     log "downloading PreFormServer $version (about 330 MB) from $url"
-    curl -fL --max-time 1800 --max-filesize 1073741824 --retry 3 -A "preform-linux/$PREFORM_LINUX_VERSION" -o "$tmp/preform.zip" "$url"
+    curl -fL --proto '=https' --max-time 1800 --max-filesize 1073741824 --retry 3 -A "preform-linux/$PREFORM_LINUX_VERSION" -o "$tmp/preform.zip" "$url"
     check_zip_entries "$tmp/preform.zip"
     log "extracting (the 1.1 GB debug symbols are skipped)"
     unzip -q "$tmp/preform.zip" -x '*.pdb' -d "$tmp/stage"
