@@ -146,7 +146,8 @@ material or layer height answers `Scene type not supported`; `auto-pack` and
 `auto-layout` are refused for this machine type, so models stay where import
 puts them; and sending a job to any SLS printer that is not real hardware, the
 virtual ones or the simulator, is refused with an "incompatible firmware
-version" message. Expect Formlabs to fill those in as the printer ships.
+version" message. Expect Formlabs to fill those in as the printer ships. PreFormServer
+3.65.1 lists the family (with Nylon 12 V1 at 0.11 mm) in `list-materials`.
 
 **USB printers** are out of reach: PreFormServer drives them through a bundled
 Windows `libusb-1.0.dll` and Wine has no USB passthrough. A winelib
@@ -230,7 +231,7 @@ queue.
 | `WINEPREFIX`, `WINEDEBUG`, `WINEDLLOVERRIDES` | prefix under home, `-all`, `mscoree=d;mshtml=d` | Passed to Wine. |
 
 Docker build arguments: `WINE_BRANCH` (`devel`), `WINE_VERSION`
-(`11.21~noble-1`), `PREFORM_VERSION` (`latest`), `BUNDLE` (`0`). Container
+(`11.22~noble-1`), `PREFORM_VERSION` (`latest`), `BUNDLE` (`0`). Container
 environment: `PUID`/`PGID` (`1000`) own `/data` and `/jobs`; every `PREFORM_*`,
 `FORMLABS_*`, `QT_*` and `WINE*` variable is passed through to PreFormServer.
 Image tags: `latest` and `X.Y.Z` from releases, `main` from every green build of

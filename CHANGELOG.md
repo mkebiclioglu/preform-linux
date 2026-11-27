@@ -1,13 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.3.4 (2026-11-27)
+
+- Checked against PreFormServer 3.65.1 (Local API 1.0.4): the CI runs, which install the
+  latest release, pass on the Docker image and on bare metal. 3.65.1 lists the Fuse X1 in
+  `list-materials`.
 
 - Signature check: only the certificate under osslsigncode's "Signer's certificate:" heading
   is accepted as the signer. osslsigncode up to 2.7 (Debian 12 ships 2.5) also prints
   every certificate embedded in the signature, and a "Formlabs Inc." subject found there
   used to satisfy the check. The image's osslsigncode 2.8 does not print that list.
 - Downloads refuse a redirect to anything but HTTPS.
-- Docker image: Wine 11.21 (was 11.20).
+- Docker image: Wine 11.22 (was 11.20).
 - CI: docker/login-action 4.8.0.
 
 ## 0.3.3 (2026-10-23)
